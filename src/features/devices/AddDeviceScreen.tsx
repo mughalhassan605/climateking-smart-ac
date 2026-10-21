@@ -1,548 +1,308 @@
 import { useNavigation } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
-import React, { useCallback, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Pressable,
-  ScrollView,
-  TextInput,
-  View,
-} from 'react-native';
-import dgram from 'react-native-udp';
+import React, { useState } from 'react';
+import { Alert, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Button } from '../../components/Button';
-import { Screen, ScreenHeader, Spacer, Stack, Row, Card } from '../../components/layout';
+import { CheckIcon, SearchIcon, WifiIcon } from '../../components/icons';
+import { Card, Row, Screen, ScreenHeader, Spacer, Stack } from '../../components/layout';
 import { Text } from '../../components/Text';
 import { useI18n } from '../../i18n';
-import { deviceKeys } from './hooks';
-import { addDeviceToSupabase } from './supabaseDevicesService';
+import { GreeControl } from '../gree/greeControl';
+import { deviceKeys, useBridges, useDiscoveredDevices } from './hooks';
+import { addDeviceToSupabase, DiscoveredDevice } from './supabaseDevicesService';
 import { Brand } from './types';
 
-const BROADCASTS = [
-  '255.255.255.255',
-  '192.168.88.255',
-  '192.168.0.255',
-  '192.168.1.255',
-  '192.168.2.255',
-  '192.168.8.255',
-  '192.168.10.255',
-  '192.168.100.255',
-  '10.0.0.255',
-];
-
-type FoundDevice = {
-  ip: string;
-  proto: 'Gree' | 'Tuya' | 'Haier';
-  detail: string;
+type BrandOption = {
+  key: string;
+  vendor: string;
+  brand: Brand;
+  app: string;
+  /** What the form asks for besides name and room. */
+  needs: 'mac' | 'tuya' | 'haier';
 };
 
-const BRANDS = [
-  { name: 'Climate King', brand: 'gree' as Brand, desc: 'Gree Protocol (Port 7000)' },
-  { name: 'Gree', brand: 'gree' as Brand, desc: 'Gree Protocol (Port 7000)' },
-  { name: 'Kenwood', brand: 'tuya' as Brand, desc: 'Tuya SmartLife (TCP 6668)' },
-  { name: 'Haier', brand: 'haier' as Brand, desc: 'Haier SmartAir / hOn (Port 56800)' },
-  { name: 'Hyundai', brand: 'tuya' as Brand, desc: 'Tuya SmartLife (TCP 6668)' },
+const BRANDS: BrandOption[] = [
+  { key: 'climateking', vendor: 'Climate King', brand: 'gree', app: 'Gree+ / EWPE Smart app', needs: 'mac' },
+  { key: 'gree', vendor: 'Gree', brand: 'gree', app: 'Gree+ app', needs: 'mac' },
+  { key: 'kenwood', vendor: 'Kenwood', brand: 'broadlink', app: 'AC Freedom app', needs: 'mac' },
+  { key: 'hyundai', vendor: 'Hyundai', brand: 'tuya', app: 'Smart Life app', needs: 'tuya' },
+  { key: 'tcl', vendor: 'TCL', brand: 'tcl', app: 'Intelligent AC app', needs: 'mac' },
+  { key: 'tcl-smartlife', vendor: 'TCL', brand: 'tuya', app: 'TCL SmartLife app', needs: 'tuya' },
+  { key: 'haier', vendor: 'Haier', brand: 'haier', app: 'HaiSmart / U+ app', needs: 'haier' },
 ];
 
 const ROOMS = ['Living Room', 'Bedroom', 'Office', 'Kitchen', 'Dining Room'];
+
+const BRAND_LABEL: Record<Brand, string> = {
+  gree: 'Gree / Climate King',
+  broadlink: 'Kenwood (AC Freedom)',
+  tcl: 'TCL',
+  tuya: 'Smart Life (Hyundai / TCL)',
+  haier: 'Haier',
+};
 
 export function AddDeviceScreen() {
   const { theme } = useUnistyles();
   const { t } = useI18n();
   const navigation = useNavigation<any>();
   const queryClient = useQueryClient();
+  const bridges = useBridges();
+  const discovered = useDiscoveredDevices();
+  const bridgeOnline = (bridges.data ?? []).some(b => b.online);
 
-  const [tab, setTab] = useState<'scan' | 'manual'>('manual');
-
-  // Manual Form States
-  const [selectedBrand, setSelectedBrand] = useState(BRANDS[0]);
-  const [deviceName, setDeviceName] = useState('');
-  const [selectedRoom, setSelectedRoom] = useState(ROOMS[0]);
-  const [ipAddress, setIpAddress] = useState('');
+  const [option, setOption] = useState<BrandOption>(BRANDS[0]);
+  const [name, setName] = useState('');
+  const [room, setRoom] = useState(ROOMS[0]);
+  const [ip, setIp] = useState('');
+  const [mac, setMac] = useState('');
+  const [deviceId, setDeviceId] = useState('');
   const [localKey, setLocalKey] = useState('');
   const [saving, setSaving] = useState(false);
-
-  // Scan States
   const [scanning, setScanning] = useState(false);
-  const [discovered, setDiscovered] = useState<Record<string, FoundDevice>>({});
-  const socketsRef = useRef<any[]>([]);
-  const intervalsRef = useRef<any[]>([]);
-  const timeoutRef = useRef<any>(null);
 
-  const stopScan = useCallback(() => {
-    // 1. Clear any pending timeouts and repeat intervals first
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-    intervalsRef.current.forEach(iv => {
-      try {
-        clearInterval(iv);
-      } catch {}
-    });
-    intervalsRef.current = [];
+  const pickFound = (found: DiscoveredDevice) => {
+    const match = BRANDS.find(b => b.brand === found.brand) ?? BRANDS[0];
+    setOption(match);
+    setIp(found.ipAddress);
+    setMac(found.brand === 'tuya' || found.brand === 'haier' ? '' : found.macAddress);
+    setDeviceId(String(found.details.device_id ?? ''));
+    setName(found.name ?? '');
+  };
 
-    // 2. Safely close all active sockets without stripping error listener first
-    const sockets = [...socketsRef.current];
-    socketsRef.current = [];
-
-    sockets.forEach(s => {
-      try {
-        // Keep an error listener attached so close errors never throw uncaught EventEmitter error
-        s.on?.('error', () => {});
-        s.close?.(() => {});
-      } catch {}
-    });
-
-    setScanning(false);
-  }, []);
-
-  // Cleanup on unmount so scanning never leaks across screens
-  React.useEffect(() => {
-    return () => {
-      stopScan();
-    };
-  }, [stopScan]);
-
-  const startScan = useCallback(() => {
-    stopScan();
-    setDiscovered({});
+  // Phone-side scan: only Gree / Climate King answer a direct query, and it needs this phone on
+  // the AC's Wi-Fi. Every other brand is found by the Home Bridge.
+  const scanFromPhone = async () => {
     setScanning(true);
-
     try {
-      // 1. Gree UDP broadcast scan
-      const gree: any = dgram.createSocket({ type: 'udp4', reusePort: true });
-      
-      // Always attach error listener FIRST to prevent unhandled EventEmitter crash
-      gree.on('error', (err: any) => {
-        console.warn('Gree UDP socket non-fatal error:', err?.message);
-      });
-
-      gree.on('message', (msg: any, rinfo: { address: string }) => {
-        try {
-          if (!rinfo?.address) return;
-          const d = JSON.parse(msg.toString());
-          if (d && (d.t === 'pack' || d.t === 'dev')) {
-            setDiscovered(prev => {
-              if (prev[rinfo.address]) return prev;
-              return {
-                ...prev,
-                [rinfo.address]: {
-                  ip: rinfo.address,
-                  proto: 'Gree',
-                  detail: `Gree/Climate King (cid=${d.cid || ''})`,
-                },
-              };
-            });
-          }
-        } catch {}
-      });
-
-      try {
-        gree.bind(0, (bindErr: any) => {
-          if (bindErr) {
-            console.warn('Gree bind error:', bindErr?.message);
-            return;
-          }
-          try {
-            gree.setBroadcast?.(true);
-          } catch {}
-          const ping = JSON.stringify({ t: 'scan' });
-          const blast = () => {
-            try {
-              BROADCASTS.forEach(a => {
-                try {
-                  gree.send(ping, undefined, undefined, 7000, a, () => {});
-                  gree.send(ping, undefined, undefined, 56800, a, () => {});
-                } catch {}
-              });
-            } catch {}
-          };
-          blast();
-          const iv = setInterval(blast, 2000);
-          intervalsRef.current.push(iv);
-        });
-      } catch (bindErr) {
-        console.warn('Gree bind call error:', bindErr);
+      const units = await GreeControl.scanForDevices();
+      if (!units.length) {
+        Alert.alert('Nothing found', 'Make sure this phone is on the same 2.4 GHz Wi-Fi as the AC and the AC is powered.');
+      } else {
+        setOption(BRANDS[0]);
+        setIp(units[0].ip);
+        setMac(units[0].mac);
+        Alert.alert('Found', `${units.length} Gree / Climate King unit(s). The first one is filled in below.`);
       }
-      socketsRef.current.push(gree);
-
-      // 2. Tuya UDP listeners (6666 & 6667) for Kenwood, Hyundai & Tuya ACs
-      [6666, 6667].forEach(port => {
-        try {
-          const tuya: any = dgram.createSocket({ type: 'udp4', reusePort: true });
-
-          // Catch any error immediately so it never causes process crash
-          tuya.on('error', (err: any) => {
-            console.warn(`Tuya UDP ${port} non-fatal error:`, err?.message);
-          });
-
-          tuya.on('message', (_msg: any, rinfo: { address: string }) => {
-            try {
-              if (!rinfo?.address) return;
-              setDiscovered(prev => {
-                if (prev[rinfo.address]) return prev;
-                return {
-                  ...prev,
-                  [rinfo.address]: {
-                    ip: rinfo.address,
-                    proto: 'Tuya',
-                    detail: `Kenwood/Tuya Unit (UDP ${port})`,
-                  },
-                };
-              });
-            } catch {}
-          });
-
-          try {
-            tuya.bind(port, (bindErr: any) => {
-              if (bindErr) {
-                console.warn(`Tuya bind to port ${port} had error:`, bindErr?.message);
-              }
-            });
-          } catch (bErr) {
-            console.warn(`Tuya bind call failed on port ${port}:`, bErr);
-          }
-          socketsRef.current.push(tuya);
-        } catch (sockErr) {
-          console.warn(`Could not create Tuya socket on ${port}:`, sockErr);
-        }
-      });
-
-      // 3. Haier SmartAir UDP listener (Port 56800)
-      try {
-        const haier: any = dgram.createSocket({ type: 'udp4', reusePort: true });
-        haier.on('error', (err: any) => {
-          console.warn('Haier UDP 56800 non-fatal error:', err?.message);
-        });
-        haier.on('message', (_msg: any, rinfo: { address: string }) => {
-          try {
-            if (!rinfo?.address) return;
-            setDiscovered(prev => {
-              if (prev[rinfo.address]) return prev;
-              return {
-                ...prev,
-                [rinfo.address]: {
-                  ip: rinfo.address,
-                  proto: 'Haier',
-                  detail: 'Haier SmartAir Unit (UDP 56800)',
-                },
-              };
-            });
-          } catch {}
-        });
-        try {
-          haier.bind(56800, (bErr: any) => {
-            if (bErr) console.warn('Haier bind 56800 error:', bErr?.message);
-          });
-        } catch (hbErr) {
-          console.warn('Haier bind call failed:', hbErr);
-        }
-        socketsRef.current.push(haier);
-      } catch (hErr) {
-        console.warn('Could not create Haier socket:', hErr);
-      }
-
-      // Automatically stop scan after 12 seconds
-      timeoutRef.current = setTimeout(() => {
-        stopScan();
-      }, 12000);
-    } catch (globalErr) {
-      console.warn('Scan start error:', globalErr);
-      stopScan();
+    } finally {
+      setScanning(false);
     }
-  }, [stopScan]);
+  };
 
-  const handleSave = async (params?: {
-    name?: string;
-    vendor?: string;
-    brand?: Brand;
-    ip?: string;
-  }) => {
-    const finalVendor = params?.vendor || selectedBrand.name;
-    const finalBrand = params?.brand || selectedBrand.brand;
-    const finalName = params?.name || deviceName || `${finalVendor} AC`;
-    const finalIp = params?.ip || ipAddress;
-
+  const save = async () => {
+    const vendor = option.vendor;
+    const cleanMac = mac.toLowerCase().replace(/[^0-9a-f]/g, '');
+    if (option.needs === 'mac' && cleanMac.length !== 12) {
+      Alert.alert('MAC address needed', 'Enter the AC’s MAC address (12 characters), or pick it from the list found by the Home Bridge.');
+      return;
+    }
     setSaving(true);
     try {
       await addDeviceToSupabase({
-        name: finalName,
-        vendor: finalVendor,
-        brand: finalBrand,
-        model: `${finalVendor} Wi-Fi`,
-        roomName: selectedRoom,
-        ipAddress: finalIp,
-        localKey: localKey,
+        name: name.trim() || `${vendor} AC`,
+        vendor,
+        brand: option.brand,
+        roomName: room,
+        ipAddress: ip,
+        macAddress: cleanMac,
+        cloudId: option.needs === 'tuya' ? deviceId : undefined,
+        secrets:
+          option.needs === 'tuya' || option.needs === 'haier'
+            ? { device_id: deviceId.trim(), local_key: localKey.trim() }
+            : undefined,
       });
-
-      // Invalidate queries so dashboard refreshes with new device immediately
       await queryClient.invalidateQueries({ queryKey: deviceKeys.all });
-      Alert.alert('Device Added', `${finalName} has been saved to your dashboard.`);
       navigation.goBack();
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to save device to database.');
+      Alert.alert('Could not add the AC', err?.message || 'Please try again.');
     } finally {
       setSaving(false);
     }
   };
 
+  const input = [styles.input, { color: theme.colors.textPrimary }];
+  const foundList = discovered.data ?? [];
+
   return (
     <Screen edges={{ top: true, bottom: true }}>
-      <ScreenHeader
-        title={t('devices.addDevice') || 'Add Wi-Fi AC'}
-        onBack={() => {
-          stopScan();
-          navigation.goBack();
-        }}
-        backLabel={t('common.back')}
-      />
-
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        {/* Tab Selector */}
-        <Row gap="sm" style={styles.tabRow}>
-          <Pressable
-            style={[styles.tabButton, tab === 'manual' && styles.tabButtonActive]}
-            onPress={() => setTab('manual')}
-          >
-            <Text
-              variant="label"
-              style={{ color: tab === 'manual' ? theme.colors.onPrimary : theme.colors.textSecondary }}
-            >
-              Manual Setup
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.tabButton, tab === 'scan' && styles.tabButtonActive]}
-            onPress={() => setTab('scan')}
-          >
-            <Text
-              variant="label"
-              style={{ color: tab === 'scan' ? theme.colors.onPrimary : theme.colors.textSecondary }}
-            >
-              Auto Wi-Fi Scan
-            </Text>
-          </Pressable>
-        </Row>
-
-        <Spacer size="md" />
-
-        {tab === 'manual' ? (
-          <Stack gap="lg">
-            {/* Brand Selection */}
-            <View>
-              <Text variant="heading">1. Select AC Brand</Text>
-              <Spacer size="xs" />
-              <Row gap="sm" wrap>
-                {BRANDS.map(b => {
-                  const isSelected = selectedBrand.name === b.name;
-                  return (
-                    <Pressable
-                      key={b.name}
-                      onPress={() => setSelectedBrand(b)}
-                      style={[
-                        styles.chip,
-                        isSelected && {
-                          borderColor: theme.colors.primary,
-                          backgroundColor: theme.colors.surfaceElevated,
-                        },
-                      ]}
-                    >
-                      <Text
-                        variant="body"
-                        style={{
-                          fontWeight: isSelected ? '700' : '400',
-                          color: isSelected ? theme.colors.primary : theme.colors.textPrimary,
-                        }}
-                      >
-                        {b.name}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </Row>
-              <Spacer size="xs" />
-              <Text variant="caption" style={{ color: theme.colors.textMuted }}>
-                Protocol: {selectedBrand.desc}
+      <ScreenHeader title={t('devices.addDevice') || 'Add AC'} onBack={() => navigation.goBack()} backLabel={t('common.back')} />
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <Card padding="lg" style={styles.bridgeCard}>
+          <Row gap="md" align="center">
+            <View style={[styles.dot, { backgroundColor: bridgeOnline ? theme.colors.success : theme.colors.warning }]} />
+            <View style={styles.flex}>
+              <Text variant="heading">{bridgeOnline ? 'Home Bridge online' : 'Home Bridge offline'}</Text>
+              <Text variant="caption" tone="muted">
+                {bridgeOnline
+                  ? 'ACs on your home Wi-Fi are found automatically and can be controlled from anywhere.'
+                  : 'Start the bridge on a PC, Raspberry Pi or spare phone at home (see bridge/README.md).'}
               </Text>
             </View>
+          </Row>
+        </Card>
 
-            {/* Room Selection */}
-            <View>
-              <Text variant="heading">2. Assign Room</Text>
-              <Spacer size="xs" />
-              <Row gap="xs" wrap>
-                {ROOMS.map(r => {
-                  const isSelected = selectedRoom === r;
-                  return (
-                    <Pressable
-                      key={r}
-                      onPress={() => setSelectedRoom(r)}
-                      style={[
-                        styles.chip,
-                        isSelected && {
-                          borderColor: theme.colors.primary,
-                          backgroundColor: theme.colors.surfaceElevated,
-                        },
-                      ]}
-                    >
-                      <Text
-                        variant="bodySm"
-                        style={{
-                          fontWeight: isSelected ? '600' : '400',
-                          color: isSelected ? theme.colors.primary : theme.colors.textSecondary,
-                        }}
-                      >
-                        {r}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </Row>
-            </View>
+        {foundList.length ? (
+          <>
+            <Spacer size="xl" />
+            <Text variant="overline" tone="muted">
+              Found on your Wi-Fi
+            </Text>
+            <Spacer size="sm" />
+            <Stack gap="sm">
+              {foundList.map(found => (
+                <Pressable key={found.id} onPress={() => pickFound(found)} style={({ pressed }) => [styles.foundRow, pressed && styles.pressed]}>
+                  <WifiIcon size={20} color={theme.colors.accent} />
+                  <View style={styles.flex}>
+                    <Text variant="label">{found.name || BRAND_LABEL[found.brand]}</Text>
+                    <Text variant="caption" tone="muted">
+                      {BRAND_LABEL[found.brand]} · {found.ipAddress}
+                      {found.needsKey ? ' · key needed' : ''}
+                    </Text>
+                  </View>
+                  <Text variant="label" tone="brand">
+                    Use
+                  </Text>
+                </Pressable>
+              ))}
+            </Stack>
+          </>
+        ) : null}
 
-            {/* Device Name */}
-            <View>
-              <Text variant="heading">3. Device Details</Text>
-              <Spacer size="xs" />
-              <TextInput
-                value={deviceName}
-                onChangeText={setDeviceName}
-                placeholder={`e.g. ${selectedBrand.name} Master AC`}
-                placeholderTextColor={theme.colors.textMuted}
-                style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
-              />
-
-              <Spacer size="sm" />
-              <Text variant="label">Wi-Fi IP Address</Text>
-              <Spacer size="xs" />
-              <TextInput
-                value={ipAddress}
-                onChangeText={setIpAddress}
-                placeholder="e.g. 192.168.1.150"
-                keyboardType="numeric"
-                placeholderTextColor={theme.colors.textMuted}
-                style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
-              />
-
-              {selectedBrand.brand === 'tuya' ? (
-                <>
-                  <Spacer size="sm" />
-                  <Text variant="label">Local Key / Token (Optional for Tuya)</Text>
-                  <Spacer size="xs" />
-                  <TextInput
-                    value={localKey}
-                    onChangeText={setLocalKey}
-                    placeholder="16-character local key (from SmartLife)"
-                    placeholderTextColor={theme.colors.textMuted}
-                    style={[styles.input, { color: theme.colors.textPrimary, borderColor: theme.colors.border }]}
-                  />
-                </>
-              ) : null}
-            </View>
-
-            <Spacer size="md" />
-
-            <Button
-              label={saving ? 'Saving...' : 'Save & Connect to Dashboard'}
-              onPress={() => handleSave()}
-              loading={saving}
-              fullWidth
-            />
-          </Stack>
-        ) : (
-          <Stack gap="lg">
-            <Card padding="md">
-              <Text variant="heading">Wi-Fi Network Scanner</Text>
-              <Spacer size="xs" />
-              <Text variant="bodySm" style={{ color: theme.colors.textSecondary }}>
-                Ensure your phone is connected to your home 2.4 GHz Wi-Fi and the AC is powered ON.
-              </Text>
-              <Spacer size="md" />
-              <Button
-                label={scanning ? 'Scanning Network...' : 'Start Scan'}
-                onPress={scanning ? stopScan : startScan}
-                variant={scanning ? 'secondary' : 'primary'}
-                loading={scanning}
-                fullWidth
-              />
-            </Card>
-
-            <View>
-              <Text variant="heading">Discovered Devices ({Object.keys(discovered).length})</Text>
-              <Spacer size="sm" />
-              {Object.keys(discovered).length === 0 ? (
-                <Text variant="bodySm" style={{ color: theme.colors.textMuted, textAlign: 'center', padding: 24 }}>
-                  {scanning ? 'Listening for Wi-Fi broadcasts...' : 'No devices found yet. Tap "Start Scan" above.'}
+        <Spacer size="xl" />
+        <Text variant="overline" tone="muted">
+          1 · Brand
+        </Text>
+        <Spacer size="sm" />
+        <View style={styles.brandGrid}>
+          {BRANDS.map(b => {
+            const selected = option.key === b.key;
+            return (
+              <Pressable
+                key={b.key}
+                onPress={() => setOption(b)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                style={[styles.brandCard, selected && { borderColor: theme.colors.accent, backgroundColor: theme.colors.surfaceElevated }]}
+              >
+                <Row justify="space-between" align="center">
+                  <Text variant="label">{b.vendor}</Text>
+                  {selected ? <CheckIcon size={16} color={theme.colors.accent} /> : null}
+                </Row>
+                <Text variant="caption" tone="muted" numberOfLines={1}>
+                  {b.app}
                 </Text>
-              ) : (
-                Object.values(discovered).map(item => (
-                  <Card key={item.ip} style={{ marginBottom: 12 }} padding="md">
-                    <Row justify="space-between" align="center">
-                      <View style={{ flex: 1 }}>
-                        <Text variant="heading">{item.proto} AC Unit</Text>
-                        <Text variant="caption" style={{ color: theme.colors.textMuted }}>
-                          IP: {item.ip} | {item.detail}
-                        </Text>
-                      </View>
-                      <Button
-                        label="+ Add"
-                        size="sm"
-                        onPress={() =>
-                          handleSave({
-                            vendor: item.proto,
-                            brand: item.proto === 'Gree' ? 'gree' : item.proto === 'Haier' ? 'haier' : 'tuya',
-                            name: `${item.proto} AC (${item.ip.split('.').slice(-1)[0]})`,
-                            ip: item.ip,
-                          })
-                        }
-                      />
-                    </Row>
-                  </Card>
-                ))
-              )}
-            </View>
-          </Stack>
-        )}
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <Spacer size="xl" />
+        <Text variant="overline" tone="muted">
+          2 · Room and name
+        </Text>
+        <Spacer size="sm" />
+        <Row gap="xs" wrap>
+          {ROOMS.map(r => {
+            const selected = room === r;
+            return (
+              <Pressable
+                key={r}
+                onPress={() => setRoom(r)}
+                style={[styles.chip, selected && { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent }]}
+              >
+                <Text variant="caption" style={{ color: selected ? theme.colors.onAccent : theme.colors.textSecondary }}>
+                  {r}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </Row>
+        <Spacer size="sm" />
+        <TextInput value={name} onChangeText={setName} placeholder={`${option.vendor} AC`} placeholderTextColor={theme.colors.textMuted} style={input} />
+
+        <Spacer size="xl" />
+        <Row justify="space-between" align="center">
+          <Text variant="overline" tone="muted">
+            3 · Connection
+          </Text>
+          {option.brand === 'gree' ? (
+            <Pressable onPress={scanFromPhone} disabled={scanning} hitSlop={8}>
+              <Row gap="xs" align="center">
+                <SearchIcon size={14} color={theme.colors.accent} />
+                <Text variant="caption" tone="brand">
+                  {scanning ? 'Scanning…' : 'Scan from this phone'}
+                </Text>
+              </Row>
+            </Pressable>
+          ) : null}
+        </Row>
+        <Spacer size="sm" />
+        <Stack gap="sm">
+          <TextInput value={ip} onChangeText={setIp} placeholder="IP address, e.g. 192.168.1.40 (optional)" keyboardType="numeric" placeholderTextColor={theme.colors.textMuted} style={input} />
+          {option.needs === 'mac' ? (
+            <TextInput value={mac} onChangeText={setMac} placeholder="MAC address, e.g. f4:91:1e:5a:0c:01" autoCapitalize="none" placeholderTextColor={theme.colors.textMuted} style={input} />
+          ) : (
+            <>
+              <TextInput value={deviceId} onChangeText={setDeviceId} placeholder={option.needs === 'tuya' ? 'Tuya device ID' : 'Haier device ID (MAC)'} autoCapitalize="none" placeholderTextColor={theme.colors.textMuted} style={input} />
+              <TextInput value={localKey} onChangeText={setLocalKey} placeholder="Local key (optional)" autoCapitalize="none" secureTextEntry placeholderTextColor={theme.colors.textMuted} style={input} />
+              <Text variant="caption" tone="muted">
+                {option.needs === 'tuya'
+                  ? 'Leave the key empty and run “climateking-bridge tuya-sync” on the bridge: it fetches every Smart Life key for you.'
+                  : 'Get the key with “haismart-keys” on the bridge computer, using the Haier account the AC is paired with.'}
+              </Text>
+            </>
+          )}
+        </Stack>
+
+        <Spacer size="xl2" />
+        <Button label={saving ? 'Adding…' : 'Add AC'} onPress={save} loading={saving} fullWidth size="lg" />
+        <Spacer size="xl" />
       </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create(theme => ({
-  container: {
-    padding: theme.spacing.lg,
-  },
-  tabRow: {
-    backgroundColor: theme.colors.surface,
-    padding: 4,
-    borderRadius: theme.radius.md,
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 10,
+  container: { padding: theme.spacing.lg },
+  flex: { flex: 1 },
+  pressed: { opacity: 0.7 },
+  bridgeCard: { borderWidth: 1, borderColor: theme.colors.border },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  foundRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: theme.radius.sm,
+    gap: theme.spacing.md,
+    padding: theme.spacing.md,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
   },
-  tabButtonActive: {
-    backgroundColor: theme.colors.primary,
+  brandGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
+  brandCard: {
+    width: '48.5%',
+    padding: theme.spacing.md,
+    gap: theme.spacing.xxs,
+    borderRadius: theme.radius.md,
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
   },
   chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: theme.radius.md,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.radius.pill,
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface,
   },
   input: {
     borderWidth: 1,
+    borderColor: theme.colors.border,
     borderRadius: theme.radius.md,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.md,
+    fontSize: 15,
     backgroundColor: theme.colors.surface,
   },
 }));

@@ -5,9 +5,13 @@ export type AxisState = { mode: AxisMode; angle: number };
 export type Airflow = { vertical: AxisState; horizontal: AxisState };
 export type Feature = 'eco' | 'sleep' | 'turbo' | 'quiet' | 'swing' | 'health' | 'selfClean' | 'xfan' | 'light';
 
-// Which on-the-wire protocol a unit speaks. Climate King + Gree units are 'gree';
-// Kenwood/Hyundai and most other Wi-Fi ACs are 'tuya'; Haier is 'haier'
-export type Brand = 'gree' | 'tuya' | 'haier';
+// Which on-the-wire protocol a unit speaks (the `brand` column; see supabase/migrations):
+//   gree      Climate King, Gree                      (Gree UDP 7000)
+//   broadlink Kenwood eSmart and other AC Freedom units (BroadLink/AUX UDP 80)
+//   tcl       TCL units on the Intelligent AC app      (BroadLink DNA UDP 80)
+//   tuya      Hyundai, TCL SmartLife, Smart Life units (Tuya TCP 6668 + Tuya cloud)
+//   haier     Haier units on the HaiSmart / U+ app      (uSS TCP 56800)
+export type Brand = 'gree' | 'broadlink' | 'tcl' | 'tuya' | 'haier';
 
 export type Device = {
   id: string;
@@ -32,6 +36,10 @@ export type Device = {
   awaitingVendor?: boolean;
   /** Last status came from cache because the latest LAN read was missed. */
   stale?: boolean;
+  /** Why the Home Bridge could not reach the unit (shown under "offline"). */
+  lastError?: string | null;
+  ipAddress?: string;
+  macAddress?: string;
 };
 
 // Constants from the original module 1467.

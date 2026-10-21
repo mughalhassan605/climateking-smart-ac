@@ -8,9 +8,10 @@ import { Text } from '../../components/Text';
 import { Spacer } from '../../components/layout';
 import { useI18n } from '../../i18n';
 import type { DeviceStackParams } from '../../navigation/types';
-import { clampTemp, useDevice, useDevicePatch, useToggleDevicePower } from './hooks';
+import { clampTemp, useDevice, useDevicePatch, useDeviceRealtime, useToggleDevicePower } from './hooks';
 import { useRoomLabel } from '../rooms/useRoomLabel';
 import {
+  Airflow,
   FAN_LABEL_KEY,
   FAN_LEVELS,
   FAN_PRESETS,
@@ -34,6 +35,7 @@ export function DeviceControlScreen() {
   const { data: device, isLoading } = useDevice(params.deviceId);
   const patch = useDevicePatch();
   const toggle = useToggleDevicePower();
+  useDeviceRealtime();
 
   if (isLoading && !device) return <Spinner />;
   if (!device) {
@@ -44,6 +46,13 @@ export function DeviceControlScreen() {
   const active = device.isOn && !offline;
   const tint = modeColor(theme, device.mode);
   const disabled = offline || !device.isOn;
+
+  const sending = patch.isPending || toggle.isPending;
+  const setSwing = (axis: keyof Airflow) => {
+    const current = device.airflow[axis];
+    const next = { ...current, mode: current.mode === 'swing' ? ('off' as const) : ('swing' as const) };
+    patch.mutate({ id: device.id, patch: { airflow: { ...device.airflow, [axis]: next } } });
+  };
 
   const setTemp = (delta: number) => {
     const next = clampTemp(device.targetTemp + delta);
@@ -63,8 +72,8 @@ export function DeviceControlScreen() {
             <Text variant="titleLg" numberOfLines={1}>
               {device.name}
             </Text>
-            <Text variant="caption" tone="muted">
-              {offline ? t('device.offline') : roomLabel(device.roomName)}
+            <Text variant="caption" tone={sending ? 'brand' : 'muted'}>
+              {sending ? 'Sending to the AC…' : offline ? t('device.offline') : roomLabel(device.roomName)}
             </Text>
           </View>
           <Pressable
@@ -77,6 +86,15 @@ export function DeviceControlScreen() {
             <PowerIcon size={24} color={active ? theme.colors.onPrimary : theme.colors.textSecondary} />
           </Pressable>
         </View>
+
+        {offline ? (
+          <View style={styles.notice}>
+            <Text variant="label">Not reachable right now</Text>
+            <Text variant="caption" tone="muted">
+              {device.lastError || 'The Home Bridge has not heard from this AC recently. Check that it is powered and on the home Wi-Fi.'}
+            </Text>
+          </View>
+        ) : null}
 
         <Spacer size="xl" />
         <View style={[styles.dial, { borderColor: active ? tint : theme.colors.border }]}>
@@ -146,6 +164,33 @@ export function DeviceControlScreen() {
             );
           })}
         </View>
+        <Spacer size="xl" />
+        <Text variant="overline" tone="muted">
+          Swing
+        </Text>
+        <Spacer size="sm" />
+        <View style={[styles.row, disabled && styles.dim]}>
+          {(['vertical', 'horizontal'] as const).map(axis => {
+            const on = device.airflow[axis].mode === 'swing';
+            return (
+              <Pressable
+                key={axis}
+                disabled={disabled}
+                onPress={() => setSwing(axis)}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: on }}
+                style={[styles.tile, on ? { borderColor: tint, backgroundColor: tint } : { borderColor: theme.colors.border }]}
+              >
+                <Text variant="label" style={{ color: on ? theme.colors.onPrimary : theme.colors.textSecondary }}>
+                  {axis === 'vertical' ? 'Up – down' : 'Left – right'}
+                </Text>
+                <Text variant="caption" style={{ color: on ? theme.colors.onPrimary : theme.colors.textMuted }}>
+                  {on ? 'On' : 'Off'}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
         <Spacer size="xl2" />
       </ScrollView>
     </View>
@@ -176,5 +221,14 @@ const styles = StyleSheet.create((theme, rt) => ({
   row: { flexDirection: 'row', gap: theme.spacing.sm },
   tile: { flex: 1, alignItems: 'center', gap: theme.spacing.xs, paddingVertical: theme.spacing.md, borderRadius: theme.radius.lg, borderWidth: 1 },
   fanRow: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
+  notice: {
+    marginTop: theme.spacing.lg,
+    padding: theme.spacing.lg,
+    gap: theme.spacing.xs,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.warning,
+    backgroundColor: theme.colors.surface,
+  },
   chip: { paddingHorizontal: theme.spacing.lg, height: 38, borderRadius: theme.radius.pill, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
 }));

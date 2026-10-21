@@ -46,10 +46,12 @@ export function fanFromGree(dat: Record<string, number>): FanSpeed {
   if (dat.Quiet === 1) return 'quiet';
   return (FAN_FROM[dat.WdSpd] ?? 'auto') as FanSpeed;
 }
+// SwUpDn / SwingLfRig: 0 default, 1 full swing, 2-6 fixed positions, 7-11 partial swings.
+// The app's angle is 1 (top/left) .. 5 (bottom/right), the same scale the Home Bridge uses.
 function axis(raw?: number): AxisState {
   if (raw === 0 || raw === undefined) return { mode: 'off', angle: 3 };
-  if (raw === 1) return { mode: 'swing', angle: 3 };
-  return { mode: 'fixed', angle: raw };
+  if (raw === 1 || raw >= 7) return { mode: 'swing', angle: 3 };
+  return { mode: 'fixed', angle: raw - 1 };
 }
 export function airflowFromGree(dat: Record<string, number>): Airflow {
   return { vertical: axis(dat.SwUpDn), horizontal: axis(dat.SwingLfRig) };
@@ -65,6 +67,6 @@ export const fanSpeedParams = (f: FanSpeed) => ({
   [GREE_PARAM.turbo]: f === 'turbo' ? 1 : 0,
 });
 export function airflowParams(axisMode: AxisState, key: 'swingVertical' | 'swingHorizontal') {
-  const value = axisMode.mode === 'swing' ? 1 : axisMode.mode === 'fixed' ? axisMode.angle : 0;
+  const value = axisMode.mode === 'swing' ? 1 : axisMode.mode === 'fixed' ? axisMode.angle + 1 : 0;
   return { [GREE_PARAM[key]]: value };
 }

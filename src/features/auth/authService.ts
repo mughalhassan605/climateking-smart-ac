@@ -1,5 +1,8 @@
+import type { Session as SupabaseSession } from '@supabase/supabase-js';
 import { env } from '../../config/env';
+import { supabase } from '../../config/supabase';
 import { apiRequest, setAccessToken, setSessionRefresher } from '../../lib/api';
+import { logger } from '../../lib/logger';
 import { StorageKeys, storage } from '../../lib/storage';
 
 // In demo mode there is no server, so auth accepts any input and mints a local session
@@ -39,6 +42,60 @@ function clearSession() {
   setAccessToken(null);
   storage.remove(StorageKeys.authRefreshToken);
 }
+
+function fromSupabase(session: SupabaseSession): Session {
+  const { user } = session;
+  const email = user.email ?? '';
+  const name = (user.user_metadata?.username as string | undefined) || email.split('@')[0] || 'Guest';
+  setAccessToken(session.access_token);
+  logger.setUserId(user.id);
+  return { user: { id: user.id, name, email, avatarUrl: null }, accessToken: session.access_token };
+}
+
+// Supabase Auth: the session is persisted and refreshed by the Supabase client itself.
+const supabaseAuth = {
+  async login(input: LoginInput): Promise<Session> {
+    const { data, error } = await supabase.auth.signInWithPassword({ email: input.account, password: input.password });
+    if (error || !data.session) throw new Error(error?.message ?? 'Sign-in failed.');
+    return fromSupabase(data.session);
+  },
+  async register(input: RegisterInput): Promise<Session> {
+    const { data, error } = await supabase.auth.signUp({
+      email: input.email,
+      password: input.password,
+      options: { data: { username: input.username, region: input.region } },
+    });
+    if (error) throw new Error(error.message);
+    if (!data.session) throw new Error('Check your email and confirm your account, then sign in.');
+    return fromSupabase(data.session);
+  },
+  async sendPasswordReset(email: string): Promise<undefined> {
+    // The reset email must show the {{ .Token }} code (Supabase: Auth -> Email Templates -> Reset Password).
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    if (error) throw new Error(error.message);
+    return undefined;
+  },
+  async resetPassword(input: ResetPasswordInput): Promise<void> {
+    const verified = await supabase.auth.verifyOtp({ email: input.email, token: input.code, type: 'recovery' });
+    if (verified.error) throw new Error(verified.error.message);
+    const updated = await supabase.auth.updateUser({ password: input.newPassword });
+    if (updated.error) throw new Error(updated.error.message);
+    await supabase.auth.signOut();
+  },
+  async restoreSession(): Promise<Session | null> {
+    const { data } = await supabase.auth.getSession();
+    return data.session ? fromSupabase(data.session) : null;
+  },
+  async signOut(): Promise<void> {
+    await supabase.auth.signOut();
+    setAccessToken(null);
+  },
+};
+
+supabase.auth.onAuthStateChange((event, session) => {
+  if (event === 'TOKEN_REFRESHED' && session) setAccessToken(session.access_token);
+  if (event === 'SIGNED_OUT' && env.SUPABASE_AUTH) onSessionLost?.();
+});
 
 let refreshInFlight: Promise<Session | null> | null = null;
 
@@ -80,7 +137,7 @@ setSessionRefresher(async () => {
   return session !== null;
 });
 
-export const authService = {
+const httpAuth = {
   async login(input: LoginInput) {
     if (env.DEMO_MODE) return demoSession(input.account);
     const res = await apiRequest<AuthResponse>('/auth/login', { method: 'POST', body: input, skipAuthRetry: true });
@@ -109,3 +166,5 @@ export const authService = {
     }
   },
 };
+
+export const authService = env.SUPABASE_AUTH ? supabaseAuth : httpAuth;

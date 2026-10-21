@@ -153,6 +153,17 @@ const styles = StyleSheet.create(theme => ({
   },
   addBtn: { backgroundColor: theme.colors.primary },
   pressed: { opacity: 0.85, transform: [{ scale: 0.96 }] },
+  bridge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.md,
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    backgroundColor: theme.colors.surface,
+  },
+  bridgeDot: { width: 10, height: 10, borderRadius: 5 },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -182,3 +193,48 @@ const styles = StyleSheet.create(theme => ({
     backgroundColor: theme.colors.border,
   },
 }));
+
+/**
+ * Whether the ACs can be reached from anywhere right now. Online: a slim confirmation. Offline:
+ * a card that says what still works and how to bring the bridge back.
+ */
+export function BridgeStatusBanner({
+  bridges,
+  onPress,
+}: {
+  bridges: { name: string; online: boolean; lastSeen: string }[] | undefined;
+  onPress: () => void;
+}) {
+  const { theme } = useUnistyles();
+  if (!bridges) return null;
+  const online = bridges.find(b => b.online);
+  const color = online ? theme.colors.success : theme.colors.warning;
+  const title = online
+    ? `Connected through ${online.name}`
+    : bridges.length
+      ? 'Home Bridge offline'
+      : 'Set up the Home Bridge';
+  const body = online
+    ? 'Your ACs stay connected and work from anywhere.'
+    : bridges.length
+      ? 'Gree / Climate King still work on your home Wi-Fi. Restart the bridge to control every AC from anywhere.'
+      : 'Run the bridge on a PC, Raspberry Pi or spare phone at home to control your ACs from anywhere.';
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={({ pressed }) => [styles.bridge, { borderColor: color }, pressed && styles.pressed]}
+    >
+      <View style={[styles.bridgeDot, { backgroundColor: color }]} />
+      <View style={styles.titleCol}>
+        <Text variant="label">{title}</Text>
+        {online ? null : (
+          <Text variant="caption" tone="muted">
+            {body}
+          </Text>
+        )}
+      </View>
+      <ChevronRightIcon size={18} color={theme.colors.textMuted} />
+    </Pressable>
+  );
+}

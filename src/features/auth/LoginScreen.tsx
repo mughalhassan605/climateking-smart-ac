@@ -20,8 +20,8 @@ export function LoginScreen() {
   const { adopt } = useSession();
   const region = route.params?.region;
 
-  const [account, setAccount] = useState('demo@climateking.eu');
-  const [password, setPassword] = useState('12345678');
+  const [account, setAccount] = useState('');
+  const [password, setPassword] = useState('');
   const [agreed, setAgreed] = useState(true);
 
   const login = useMutation({

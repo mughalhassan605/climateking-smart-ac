@@ -8,10 +8,10 @@ import { Screen } from '../../components/layout';
 import { Spacer } from '../../components/layout';
 import { useI18n } from '../../i18n';
 import type { DeviceStackParams } from '../../navigation/types';
-import { useDevices } from '../devices/hooks';
+import { useBridges, useDeviceRealtime, useDevices } from '../devices/hooks';
 import type { Device } from '../devices/types';
 import { useRooms } from '../rooms/rooms';
-import { HomeHeader, PromoBanner, SummaryStrip, welcomePromo } from './HomeParts';
+import { BridgeStatusBanner, HomeHeader, SummaryStrip } from './HomeParts';
 import { ClimateControlCard } from './ClimateControlCard';
 import { buildRoomTabs, Layout, RoomTabs } from './RoomTabs';
 import { useHome } from '../homes/homes';
@@ -23,6 +23,8 @@ export function HomeScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<DeviceStackParams>>();
   const { home, greeting } = useHome();
   const devicesQ = useDevices();
+  const bridgesQ = useBridges();
+  useDeviceRealtime();
   const roomsQ = useRooms();
   const unread = useUnreadMessageCount();
 
@@ -38,7 +40,7 @@ export function HomeScreen() {
 
   const header = (
     <View>
-      <PromoBanner promo={welcomePromo} onPress={() => navigation.navigate('Help')} />
+      <BridgeStatusBanner bridges={bridgesQ.data} onPress={() => navigation.navigate('AddDevice')} />
       <Spacer size="lg" />
       <SummaryStrip devices={devices} />
       <Spacer size="lg" />

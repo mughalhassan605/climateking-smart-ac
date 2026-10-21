@@ -1,9 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useIsFocused } from '@react-navigation/native';
-import { env } from '../../config/env';
-import { createGreeDevicesService } from '../gree/greeDevicesService';
-import { createMockDevicesService, DevicePatch, DevicesService } from './mockDevices';
-import { createSupabaseDevicesService } from './supabaseDevicesService';
+import { useEffect } from 'react';
+import { Alert } from 'react-native';
+import { DevicePatch, DevicesService } from './mockDevices';
+import {
+  createSupabaseDevicesService,
+  fetchBridges,
+  fetchDiscovered,
+  subscribeToDeviceChanges,
+} from './supabaseDevicesService';
 import { Device, TEMP_RANGE } from './types';
 
 let service: DevicesService | null = null;
@@ -15,13 +20,29 @@ export function devicesService(): DevicesService {
 
 export const deviceKeys = {
   all: ['devices'] as const,
+  bridges: () => [...deviceKeys.all, 'bridges'] as const,
+  discovered: () => [...deviceKeys.all, 'discovered'] as const,
   list: () => [...deviceKeys.all, 'list'] as const,
   detail: (id: string) => [...deviceKeys.all, 'detail', id] as const,
 };
 
-// While a screen showing live state is focused, status is re-read on a short interval
-// instead of waiting for the 30 s global stale window (the original's "offline after 30 s").
-const LIVE_REFRESH_MS = 10000;
+// Live state arrives through Supabase realtime (useDeviceRealtime); this interval is only the
+// safety net for a dropped realtime connection.
+const LIVE_REFRESH_MS = 15000;
+
+/** Refetch device data the moment the Home Bridge writes a change. Mount once per screen. */
+export function useDeviceRealtime() {
+  const qc = useQueryClient();
+  useEffect(() => subscribeToDeviceChanges(() => qc.invalidateQueries({ queryKey: deviceKeys.all })), [qc]);
+}
+
+export function useBridges() {
+  return useQuery({ queryKey: deviceKeys.bridges(), queryFn: fetchBridges, refetchInterval: 20000 });
+}
+
+export function useDiscoveredDevices() {
+  return useQuery({ queryKey: deviceKeys.discovered(), queryFn: fetchDiscovered, refetchInterval: 15000 });
+}
 
 export function useDevices() {
   const focused = useIsFocused();
@@ -61,7 +82,8 @@ export function useDevicePatch() {
       qc.setQueryData<Device>(deviceKeys.detail(id), d => (d ? { ...d, ...patch } : d));
       return { prevList, prevDetail, id };
     },
-    onError: (_e, _v, ctx) => {
+    onError: (error, _v, ctx) => {
+      Alert.alert('AC not updated', error instanceof Error ? error.message : String(error));
       if (!ctx) return;
       qc.setQueryData(deviceKeys.list(), ctx.prevList);
       qc.setQueryData(deviceKeys.detail(ctx.id), ctx.prevDetail);
