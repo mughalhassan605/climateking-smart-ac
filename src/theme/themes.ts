@@ -1,0 +1,63 @@
+import { palette, sharedTokens } from './tokens';
+
+export const lightTheme = {
+  name: 'light',
+  isDark: false,
+  colors: {
+    background: palette.neutral50,
+    surface: palette.neutral0,
+    surfaceElevated: palette.neutral0,
+    surfaceMuted: palette.neutral100,
+    border: palette.neutral200,
+    borderStrong: palette.neutral300,
+    textPrimary: palette.neutral900,
+    textSecondary: palette.neutral600,
+    textMuted: palette.neutral400,
+    textInverse: palette.neutral0,
+    primary: palette.neutral500,
+    primaryMuted: palette.neutral100,
+    onPrimary: palette.white,
+    accent: palette.brand500,
+    onAccent: palette.neutral900,
+    success: palette.success,
+    warning: palette.warning,
+    danger: palette.danger,
+    info: palette.info,
+    skeleton: palette.neutral200,
+    overlay: palette.overlayLight,
+    mode: { cool: palette.cool, heat: palette.heat, dry: palette.dry, fan: palette.fan, auto: palette.auto },
+  },
+  ...sharedTokens,
+};
+
+export type AppTheme = typeof lightTheme;
+
+export const darkTheme: AppTheme = {
+  ...lightTheme,
+  name: 'dark',
+  isDark: true,
+  colors: {
+    background: palette.neutral950,
+    surface: palette.neutral900,
+    surfaceElevated: palette.neutral800,
+    surfaceMuted: palette.neutral800,
+    border: palette.neutral800,
+    borderStrong: palette.neutral700,
+    textPrimary: palette.neutral50,
+    textSecondary: palette.neutral300,
+    textMuted: palette.neutral500,
+    textInverse: palette.neutral900,
+    primary: palette.neutral400,
+    primaryMuted: palette.neutral800,
+    onPrimary: palette.neutral950,
+    accent: palette.brand400,
+    onAccent: palette.neutral950,
+    success: palette.success,
+    warning: palette.warning,
+    danger: palette.danger,
+    info: palette.info,
+    skeleton: palette.neutral800,
+    overlay: palette.overlayDark,
+    mode: { cool: palette.cool, heat: palette.heat, dry: palette.dry, fan: palette.fan, auto: palette.auto },
+  },
+};

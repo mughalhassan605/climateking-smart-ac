@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClimateKing Smart AC — Live Admin & Telemetry Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .glass-card {
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(226, 232, 240, 0.8);
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Supabase credentials
+    const SUPABASE_URL = 'https://fvgkqztdovqzxhskhxkn.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ2Z2txenRkb3Zxenhoc2toeGtuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0OTI5MDAsImV4cCI6MjEwODA2ODkwMH0.YkuB06l6RGZiq2EdWqRWWrEnxSdTWBAuYX9m2UArE3s';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    function Dashboard() {
+      const [devices, setDevices] = useState([]);
+      const [activities, setActivities] = useState([]);
+      const [errors, setErrors] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [filterBrand, setFilterBrand] = useState('ALL');
+      const [showAddModal, setShowAddModal] = useState(false);
+      const [newDevice, setNewDevice] = useState({
+        name: '',
+        vendor: 'Kenwood',
+        brand: 'tuya',
+        room_name: 'Living Room',
+        ip_address: '',
+      });
+
+      // Load initial data
+      const loadData = async () => {
+        try {
+          const [devRes, actRes, errRes] = await Promise.all([
+            supabase.from('devices').select('*').order('created_at', { ascending: true }),
+            supabase.from('user_activity').select('*').order('created_at', { ascending: false }).limit(20),
+            supabase.from('error_logs').select('*').order('created_at', { ascending: false }).limit(20)
+          ]);
+
+          if (devRes.data) setDevices(devRes.data);
+          if (actRes.data) setActivities(actRes.data);
+          if (errRes.data) setErrors(errRes.data);
+        } catch (e) {
+          console.error('Failed to load data:', e);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      useEffect(() => {
+        loadData();
+
+        // Realtime channels
+        const deviceSub = supabase
+          .channel('public:devices')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, loadData)
+          .subscribe();
+
+        const activitySub = supabase
+          .channel('public:user_activity')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'user_activity' }, payload => {
+            setActivities(prev => [payload.new, ...prev.slice(0, 19)]);
+          })
+          .subscribe();
+
+        const errorSub = supabase
+          .channel('public:error_logs')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'error_logs' }, payload => {
+            setErrors(prev => [payload.new, ...prev.slice(0, 19)]);
+          })
+          .subscribe();
+
+        // 8-second refresh fallback
+        const interval = setInterval(loadData, 8000);
+
+        return () => {
+          supabase.removeChannel(deviceSub);
+          supabase.removeChannel(activitySub);
+          supabase.removeChannel(errorSub);
+          clearInterval(interval);
+        };
+      }, []);
+
+      // Toggle Power
+      const togglePower = async (device) => {
+        const nextState = !device.is_on;
+        setDevices(devices.map(d => d.id === device.id ? { ...d, is_on: nextState } : d));
+        await supabase.from('devices').update({ is_on: nextState, updated_at: new Date() }).eq('id', device.id);
+        await supabase.from('user_activity').insert({
+          action: 'AC_POWER_TOGGLED',
+          device_name: device.name,
+          details: { isOn: nextState, source: 'Web Dashboard' }
+        });
+      };
+
+      // Adjust Temp
+      const adjustTemp = async (device, delta) => {
+        const nextTemp = Math.min(30, Math.max(16, Number(device.target_temp) + delta));
+        setDevices(devices.map(d => d.id === device.id ? { ...d, target_temp: nextTemp } : d));
+        await supabase.from('devices').update({ target_temp: nextTemp, updated_at: new Date() }).eq('id', device.id);
+        await supabase.from('user_activity').insert({
+          action: 'TEMP_CHANGED',
+          device_name: device.name,
+          details: { targetTemp: nextTemp, source: 'Web Dashboard' }
+        });
+      };
+
+      // Handle Add Device
+      const handleAddDevice = async (e) => {
+        e.preventDefault();
+        const id = 'device-' + Date.now();
+        const payload = {
+          id,
+          name: newDevice.name || `${newDevice.vendor} AC`,
+          vendor: newDevice.vendor,
+          brand: newDevice.brand,
+          model: `${newDevice.vendor} Wi-Fi`,
+          room_name: newDevice.room_name,
+          ip_address: newDevice.ip_address,
+          is_on: false,
+          mode: 'cool',
+          target_temp: 24,
+          status: 'online'
+        };
+
+        await supabase.from('devices').insert(payload);
+        await supabase.from('user_activity').insert({
+          action: 'DEVICE_ADDED',
+          device_name: payload.name,
+          details: { brand: payload.brand, vendor: payload.vendor, source: 'Web Dashboard' }
+        });
+        setShowAddModal(false);
+        setNewDevice({ name: '', vendor: 'Kenwood', brand: 'tuya', room_name: 'Living Room', ip_address: '' });
+        loadData();
+      };
+
+      const filteredDevices = filterBrand === 'ALL'
+        ? devices
+        : devices.filter(d => {
+            if (filterBrand === 'GREE') return d.brand === 'gree';
+            if (filterBrand === 'TUYA') return d.brand === 'tuya';
+            if (filterBrand === 'HAIER') return d.brand === 'haier';
+            return true;
+          });
+
+      const activeCount = devices.filter(d => d.is_on).length;
+
+      return (
+        <div class="max-w-7xl mx-auto px-4 py-8">
+          {/* Top Bar */}
+          <header class="flex flex-col md:flex-row md:items-center justify-between pb-8 border-b border-slate-800 gap-4">
+            <div>
+              <div class="flex items-center gap-3">
+                <span class="text-3xl">❄️</span>
+                <h1 class="text-2xl md:text-3xl font-extrabold tracking-tight text-white">
+                  ClimateKing <span class="text-cyan-400">IoT Command Center</span>
+                </h1>
+              </div>
+              <p class="text-slate-400 text-sm mt-1">
+                Unified Multi-Brand Management: Climate King, Gree, Kenwood, Haier & Hyundai
+              </p>
+            </div>
+            <div class="flex items-center gap-3">
+              <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-2"></span>
+                Supabase Realtime Live
+              </span>
+              <button
+                onClick={() => setShowAddModal(true)}
+                class="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded-lg text-sm transition shadow-lg shadow-cyan-500/20 flex items-center gap-2"
+              >
+                + Add AC Unit
+              </button>
+            </div>
+          </header>
+
+          {/* KPI Stat Cards */}
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 my-8">
+            <div class="bg-slate-800/60 p-5 rounded-2xl border border-slate-700/60">
+              <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Registered ACs</span>
+              <div class="text-3xl font-bold text-white mt-1">{devices.length} Units</div>
+              <div class="text-xs text-cyan-400 mt-1">Multi-Brand Fleet</div>
+            </div>
+            <div class="bg-slate-800/60 p-5 rounded-2xl border border-slate-700/60">
+              <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Running Right Now</span>
+              <div class="text-3xl font-bold text-emerald-400 mt-1">{activeCount} / {devices.length}</div>
+              <div class="text-xs text-slate-400 mt-1">{devices.length - activeCount} Standby</div>
+            </div>
+            <div class="bg-slate-800/60 p-5 rounded-2xl border border-slate-700/60">
+              <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">User Activities</span>
+              <div class="text-3xl font-bold text-amber-400 mt-1">{activities.length}</div>
+              <div class="text-xs text-slate-400 mt-1">Realtime telemetry</div>
+            </div>
+            <div class="bg-slate-800/60 p-5 rounded-2xl border border-slate-700/60">
+              <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Errors Logged</span>
+              <div class="text-3xl font-bold text-rose-400 mt-1">{errors.length}</div>
+              <div class="text-xs text-slate-400 mt-1">Hardware / Network</div>
+            </div>
+          </div>
+
+          {/* Main Content Layout: Grid (Left: AC Controls, Right: Live Activity & Errors) */}
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            {/* Left 2 Cols: AC Units Grid */}
+            <div class="lg:col-span-2 space-y-6">
+              <div class="flex items-center justify-between">
+                <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                  Air Conditioner Units
+                </h2>
+                {/* Protocol Filter */}
+                <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700 text-xs">
+                  {['ALL', 'GREE', 'TUYA', 'HAIER'].map(b => (
+                    <button
+                      key={b}
+                      onClick={() => setFilterBrand(b)}
+                      class={`px-3 py-1 rounded-md font-medium transition ${
+                        filterBrand === b ? 'bg-cyan-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {b === 'ALL' ? 'All Brands' : b === 'GREE' ? 'Gree / CK' : b === 'TUYA' ? 'Tuya (Kenwood/Hyundai)' : 'Haier (SmartAir)'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {loading ? (
+                <div class="text-center py-16 text-slate-500">Connecting to Supabase...</div>
+              ) : (
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredDevices.map(d => (
+                    <div
+                      key={d.id}
+                      class={`p-6 rounded-2xl border transition-all duration-300 relative overflow-hidden ${
+                        d.is_on
+                          ? 'bg-slate-800/90 border-cyan-500/40 shadow-xl shadow-cyan-950/40'
+                          : 'bg-slate-800/40 border-slate-700/50 opacity-75'
+                      }`}
+                    >
+                      <div class="flex items-start justify-between">
+                        <div>
+                          <div class="flex items-center gap-2">
+                            <span class={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                              d.brand === 'gree'
+                                ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                                : d.brand === 'haier'
+                                ? 'bg-red-500/20 text-red-300 border border-red-500/30'
+                                : 'bg-orange-500/20 text-orange-300 border border-orange-500/30'
+                            }`}>
+                              {d.vendor || d.brand}
+                            </span>
+                            <span class="text-xs text-slate-400">{d.room_name}</span>
+                          </div>
+                          <h3 class="text-lg font-bold text-white mt-1.5">{d.name}</h3>
+                          <p class="text-xs text-slate-500 font-mono mt-0.5">IP: {d.ip_address || '192.168.1.x'} • {d.model}</p>
+                        </div>
+                        {/* Power Toggle Button */}
+                        <button
+                          onClick={() => togglePower(d)}
+                          class={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg transition-all ${
+                            d.is_on
+                              ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/30'
+                              : 'bg-slate-700 hover:bg-slate-600 text-slate-400'
+                          }`}
+                        >
+                          ⏻
+                        </button>
+                      </div>
+
+                      {/* Temperature & Mode Controls */}
+                      <div class="mt-6 flex items-center justify-between pt-4 border-t border-slate-700/60">
+                        <div>
+                          <div class="text-xs text-slate-400 uppercase tracking-wider">Target Temp</div>
+                          <div class="text-3xl font-black text-white mt-0.5">{d.target_temp}°C</div>
+                        </div>
+
+                        <div class="flex items-center gap-2">
+                          <button
+                            onClick={() => adjustTemp(d, -1)}
+                            disabled={!d.is_on}
+                            class="w-9 h-9 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white font-bold text-lg flex items-center justify-center"
+                          >
+                            −
+                          </button>
+                          <button
+                            onClick={() => adjustTemp(d, 1)}
+                            disabled={!d.is_on}
+                            class="w-9 h-9 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-white font-bold text-lg flex items-center justify-center"
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        <div class="text-right">
+                          <div class="text-xs text-slate-400 uppercase tracking-wider">Mode</div>
+                          <span class="inline-block mt-0.5 text-xs font-semibold px-2 py-0.5 rounded bg-slate-700 text-cyan-300 uppercase">
+                            {d.mode || 'cool'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Right Col: Live Activity Stream & Error Center */}
+            <div class="space-y-6">
+              
+              {/* User Activity Live Stream */}
+              <div class="bg-slate-800/60 rounded-2xl border border-slate-700/60 p-5">
+                <h3 class="text-base font-bold text-white flex items-center gap-2 mb-4">
+                  <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                  Live User Behavior Stream
+                </h3>
+                <div class="space-y-3 max-h-72 overflow-y-auto pr-1 text-xs">
+                  {activities.length === 0 ? (
+                    <p class="text-slate-500 py-4 text-center">No recent activities recorded.</p>
+                  ) : (
+                    activities.map((a, idx) => (
+                      <div key={a.id || idx} class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
+                        <div class="flex items-center justify-between text-slate-400">
+                          <span class="font-bold text-cyan-400">{a.action}</span>
+                          <span class="text-[10px]">{new Date(a.created_at).toLocaleTimeString()}</span>
+                        </div>
+                        {a.device_name && (
+                          <div class="text-slate-300 mt-1 font-medium">{a.device_name}</div>
+                        )}
+                        {a.details && (
+                          <div class="text-slate-500 font-mono text-[11px] mt-0.5 truncate">
+                            {JSON.stringify(a.details)}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Error & Crash Log Feed */}
+              <div class="bg-slate-800/60 rounded-2xl border border-slate-700/60 p-5">
+                <h3 class="text-base font-bold text-rose-400 flex items-center gap-2 mb-4">
+                  <span>⚠️</span> Error & Disconnect Logs
+                </h3>
+                <div class="space-y-3 max-h-72 overflow-y-auto pr-1 text-xs">
+                  {errors.length === 0 ? (
+                    <p class="text-emerald-400/80 py-4 text-center">All clear! No errors reported.</p>
+                  ) : (
+                    errors.map((err, idx) => (
+                      <div key={err.id || idx} class="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                        <div class="flex items-center justify-between">
+                          <span class="font-bold text-rose-300">{err.error_type}</span>
+                          <span class="text-[10px] text-slate-400">{new Date(err.created_at).toLocaleTimeString()}</span>
+                        </div>
+                        <p class="text-slate-300 mt-1 text-xs">{err.message}</p>
+                        <div class="flex items-center gap-2 mt-2 text-[10px] text-slate-400 font-mono">
+                          {err.device_brand && <span>Brand: {err.device_brand}</span>}
+                          {err.device_ip && <span>IP: {err.device_ip}</span>}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          {/* Add Device Modal */}
+          {showAddModal && (
+            <div class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div class="bg-slate-800 rounded-2xl border border-slate-700 p-6 max-w-md w-full shadow-2xl">
+                <h3 class="text-xl font-bold text-white mb-4">Add Wi-Fi Air Conditioner</h3>
+                <form onSubmit={handleAddDevice} class="space-y-4 text-sm">
+                  <div>
+                    <label class="block text-slate-300 mb-1 font-medium">Select Brand</label>
+                    <select
+                      class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white"
+                      value={newDevice.vendor}
+                      onChange={e => {
+                        const v = e.target.value;
+                        setNewDevice({
+                          ...newDevice,
+                          vendor: v,
+                          brand: (v === 'Climate King' || v === 'Gree') ? 'gree' : (v === 'Haier' ? 'haier' : 'tuya')
+                        });
+                      }}
+                    >
+                      <option value="Climate King">Climate King (Gree UDP)</option>
+                      <option value="Gree">Gree (Gree UDP)</option>
+                      <option value="Haier">Haier (SmartAir / hOn)</option>
+                      <option value="Kenwood">Kenwood (Tuya SmartLife)</option>
+                      <option value="Hyundai">Hyundai (Tuya SmartLife)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="block text-slate-300 mb-1 font-medium">Device Name</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Master Bedroom Kenwood"
+                      class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white"
+                      value={newDevice.name}
+                      onChange={e => setNewDevice({ ...newDevice, name: e.target.value })}
+                    />
+                  </div>
+
+                  <div>
+                    <label class="block text-slate-300 mb-1 font-medium">Room</label>
+                    <select
+                      class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white"
+                      value={newDevice.room_name}
+                      onChange={e => setNewDevice({ ...newDevice, room_name: e.target.value })}
+                    >
+                      <option value="Living Room">Living Room</option>
+                      <option value="Bedroom">Bedroom</option>
+                      <option value="Office">Office</option>
+                      <option value="Kitchen">Kitchen</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="block text-slate-300 mb-1 font-medium">Wi-Fi IP Address (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 192.168.1.120"
+                      class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white"
+                      value={newDevice.ip_address}
+                      onChange={e => setNewDevice({ ...newDevice, ip_address: e.target.value })}
+                    />
+                  </div>
+
+                  <div class="flex justify-end gap-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddModal(false)}
+                      class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      class="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold"
+                    >
+                      Save AC
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Dashboard />);
+  </script>
+</body>
+</html>
