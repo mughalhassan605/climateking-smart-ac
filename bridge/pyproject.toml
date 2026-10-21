@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "climateking-bridge"
+version = "0.1.0"
+description = "ClimateKing Home Bridge: keeps Gree, Climate King, Kenwood, TCL, Hyundai and Haier ACs connected and controllable from anywhere."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "supabase>=2.9",
+    "greeclimate>=2.1",
+    "broadlink>=0.19",
+    "tinytuya>=1.13",
+    "cryptography>=41",
+]
+
+[project.optional-dependencies]
+# Haier HaiSmart units. Not on PyPI yet, so installed straight from the project's repository.
+haier = [
+    "haismart-hrdp @ git+https://github.com/enapt/haismart-local.git#subdirectory=packages/haismart-hrdp",
+    "haismart-extractor[cloud] @ git+https://github.com/enapt/haismart-local.git#subdirectory=packages/haismart-extractor",
+]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+climateking-bridge = "climateking_bridge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["climateking_bridge*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
