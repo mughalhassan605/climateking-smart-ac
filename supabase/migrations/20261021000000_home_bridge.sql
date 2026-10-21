@@ -179,6 +179,11 @@ begin
     'user_activity', 'error_logs'
   ] loop
     execute format('alter table public.%I enable row level security', t);
+    -- The first app version opened these tables to everyone; policies are OR-ed, so drop them.
+    execute format('drop policy if exists "Allow public read %s" on public.%I', t, t);
+    execute format('drop policy if exists "Allow public insert %s" on public.%I', t, t);
+    execute format('drop policy if exists "Allow public update %s" on public.%I', t, t);
+    execute format('drop policy if exists "Allow public delete %s" on public.%I', t, t);
     execute format('drop policy if exists "owner read" on public.%I', t);
     execute format('drop policy if exists "owner insert" on public.%I', t);
     execute format('drop policy if exists "owner update" on public.%I', t);
