@@ -4,6 +4,7 @@
   climateking-bridge discover      list the ACs this computer can see on the LAN
   climateking-bridge check ...     talk to one AC directly, without Supabase, to test it
   climateking-bridge tuya-sync     copy Tuya ids and local keys from the Tuya cloud to your devices
+  climateking-bridge doctor        check bridge.env, the sign-in and what is on the LAN
 """
 
 from __future__ import annotations
@@ -18,8 +19,13 @@ from . import __version__
 from .config import ConfigError, load
 
 
-def _logging(level: str) -> None:
-    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+def _logging(level: str, log_file: str | None = None) -> None:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file:
+        from logging.handlers import RotatingFileHandler
+
+        handlers.append(RotatingFileHandler(log_file, maxBytes=2_000_000, backupCount=3, encoding="utf-8"))
+    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
     # Library chatter (every UDP packet) only in DEBUG.
     for noisy in ("greeclimate", "httpx", "hpack", "realtime", "websockets"):
         logging.getLogger(noisy).setLevel(max(logging.WARNING, logging.getLogger().level))
@@ -38,7 +44,7 @@ async def cmd_run(args) -> int:
     from .store import SupabaseStore
 
     config = load(args.config)
-    _logging(config.log_level)
+    _logging(config.log_level, config.log_file)
     store = SupabaseStore(config.supabase_url, config.supabase_anon_key, config.email, config.password)
     bridge = Bridge(store, config.bridge_name, config.settings, config.discovery_minutes, tuya_cloud(config))
     await bridge.run()
@@ -133,6 +139,55 @@ async def cmd_tuya_sync(args) -> int:
     return 0
 
 
+async def cmd_doctor(args) -> int:
+    """Walk through everything `run` needs and say plainly what is wrong."""
+    from .discovery import scan_all
+    from .store import SupabaseStore
+
+    _logging("WARNING")
+    ok = True
+    config = load(args.config)
+    print(f"[ok]   bridge.env loaded (bridge name: {config.bridge_name})")
+    store = SupabaseStore(config.supabase_url, config.supabase_anon_key, config.email, config.password)
+    try:
+        await store.connect()
+        devices = await store.load_devices()
+        print(f"[ok]   signed in as {config.email}: {len(devices)} AC(s) in your account")
+        for d in devices:
+            missing = []
+            if d.brand in ("gree", "broadlink", "tcl") and not d.mac:
+                missing.append("MAC address")
+            if d.brand in ("tuya", "haier") and not d.secrets.get("local_key"):
+                missing.append("local key")
+            note = f"  -> needs {', '.join(missing)}" if missing else ""
+            print(f"         {d.name:24} {d.brand:10} {d.ip or 'no IP yet':15}{note}")
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        print(f"[FAIL] could not sign in to Supabase: {exc}")
+        print("       Check CK_EMAIL / CK_PASSWORD (the account you use in the app) and SUPABASE_URL.")
+    finally:
+        await store.close()
+    if config.tuya_cloud_configured:
+        cloud = tuya_cloud(config)
+        result = await asyncio.to_thread(cloud.getdevices, False)
+        if isinstance(result, list):
+            print(f"[ok]   Tuya cloud: {len(result)} unit(s) linked")
+        else:
+            ok = False
+            print(f"[FAIL] Tuya cloud: {result}")
+    else:
+        print("[--]   Tuya cloud not configured (only needed for Hyundai / Smart Life units)")
+    found = await scan_all(6)
+    if found:
+        print(f"[ok]   {len(found)} AC(s) answering on this Wi-Fi:")
+        for f in found:
+            print(f"         {f.brand:10} {f.ip:15} {f.mac}")
+    else:
+        print("[??]   no AC answered on this Wi-Fi. Is this computer on the same network as the ACs?")
+        print("       On Windows, allow Python through the firewall (private networks).")
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="climateking-bridge", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -154,10 +209,11 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("-v", "--verbose", action="store_true")
 
     sub.add_parser("tuya-sync", help="fetch Tuya ids and local keys from the Tuya cloud")
+    sub.add_parser("doctor", help="check the setup step by step")
 
     args = parser.parse_args(argv)
     handler = {
-        None: cmd_run, "run": cmd_run, "discover": cmd_discover, "check": cmd_check, "tuya-sync": cmd_tuya_sync,
+        None: cmd_run, "run": cmd_run, "discover": cmd_discover, "check": cmd_check, "tuya-sync": cmd_tuya_sync, "doctor": cmd_doctor,
     }[args.command]
     try:
         return asyncio.run(handler(args))

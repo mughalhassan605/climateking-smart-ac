@@ -29,6 +29,7 @@ class Config:
     tuya_api_key: str | None = None
     tuya_api_secret: str | None = None
     log_level: str = "INFO"
+    log_file: str | None = None
 
     @property
     def tuya_cloud_configured(self) -> bool:
@@ -91,4 +92,5 @@ def load(path: str | None = None) -> Config:
         tuya_api_key=get("TUYA_API_KEY"),
         tuya_api_secret=get("TUYA_API_SECRET"),
         log_level=get("CK_LOG_LEVEL", "INFO").upper(),
+        log_file=get("CK_LOG_FILE"),
     )
