@@ -1,0 +1,75 @@
+name: Android APK
+
+# Builds the installable APK on GitHub's machines (they ship the Android SDK) and publishes it as a
+# pre-release, so the newest build is always one tap away under Releases.
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths-ignore: ['bridge/**', 'dashboard/**', 'simulator/**', '**/*.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Check the app
+        run: |
+          npx tsc --noEmit
+          npx jest --ci
+
+      - name: Build release APK
+        working-directory: android
+        # Phones only: the two ARM ABIs cover every Android phone and halve the build time.
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a --no-daemon --stacktrace
+
+      - name: Name the APK
+        id: apk
+        run: |
+          version=$(grep -oP 'versionName "\K[^"]+' android/app/build.gradle)
+          name="ClimateKing-${version}-build${{ github.run_number }}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.name }}
+
+      - name: Publish download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-build-${{ github.run_number }}
+          name: ClimateKing ${{ steps.apk.outputs.version }} (build ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: ${{ steps.apk.outputs.name }}
+          body: |
+            Install on Android: download the APK below on the phone and open it
+            (allow "Install unknown apps" for your browser when asked).
+            Built from `${{ github.ref_name }}` at ${{ github.sha }}.
