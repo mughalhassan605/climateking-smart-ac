@@ -7,6 +7,7 @@ import { Screen, ScreenHeader } from '../components/layout';
 import { EmptyState } from '../components/feedback';
 import { useI18n } from '../i18n';
 import { AddDeviceScreen } from '../features/devices/AddDeviceScreen';
+import { WifiSetupScreen } from '../features/devices/WifiSetupScreen';
 import { DeviceControlScreen } from '../features/devices/DeviceControlScreen';
 import { DeviceSettingsScreen } from '../features/devices/DeviceSettingsScreen';
 import { MyACsScreen } from '../features/devices/MyACsScreen';
@@ -39,6 +40,7 @@ function DeviceStackNavigator() {
       <DeviceStack.Screen name="DeviceControl" component={DeviceControlScreen} />
       <DeviceStack.Screen name="DeviceSettings" component={DeviceSettingsScreen} />
       <DeviceStack.Screen name="AddDevice" component={AddDeviceScreen} />
+      <DeviceStack.Screen name="WifiSetup" component={WifiSetupScreen} />
       <DeviceStack.Screen name="RoomManagement">
         {p => <Placeholder title={t('rooms.title')} onBack={() => p.navigation.goBack()} />}
       </DeviceStack.Screen>

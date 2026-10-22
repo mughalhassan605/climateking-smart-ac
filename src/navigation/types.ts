@@ -17,6 +17,7 @@ export type DeviceStackParams = {
   DeviceControl: { deviceId: string };
   DeviceSettings: { deviceId: string };
   AddDevice: undefined;
+  WifiSetup: undefined;
   RoomManagement: undefined;
   Messages: undefined;
   Help: undefined;

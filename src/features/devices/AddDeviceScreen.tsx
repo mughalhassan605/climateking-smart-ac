@@ -141,6 +141,20 @@ export function AddDeviceScreen() {
           </Row>
         </Card>
 
+        <Spacer size="md" />
+        <Pressable onPress={() => navigation.navigate('WifiSetup')} style={({ pressed }) => [styles.foundRow, styles.setupRow, pressed && styles.pressed]}>
+          <WifiIcon size={22} color={theme.colors.accent} />
+          <View style={styles.flex}>
+            <Text variant="label">New AC? Connect it to Wi-Fi</Text>
+            <Text variant="caption" tone="muted">
+              Step-by-step guide, no IP or MAC needed
+            </Text>
+          </View>
+          <Text variant="label" tone="brand">
+            Start
+          </Text>
+        </Pressable>
+
         {foundList.length ? (
           <>
             <Spacer size="xl" />
@@ -267,6 +281,7 @@ const styles = StyleSheet.create(theme => ({
   flex: { flex: 1 },
   pressed: { opacity: 0.7 },
   bridgeCard: { borderWidth: 1, borderColor: theme.colors.border },
+  setupRow: { borderColor: theme.colors.accent, borderWidth: 1.5 },
   dot: { width: 10, height: 10, borderRadius: 5 },
   foundRow: {
     flexDirection: 'row',
