@@ -4,12 +4,12 @@ import React, { useState } from 'react';
 import { Alert, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Button } from '../../components/Button';
-import { CheckIcon, SearchIcon, WifiIcon } from '../../components/icons';
+import { CheckIcon, WifiIcon } from '../../components/icons';
 import { Card, Row, Screen, ScreenHeader, Spacer, Stack } from '../../components/layout';
 import { Text } from '../../components/Text';
 import { useI18n } from '../../i18n';
-import { GreeControl } from '../gree/greeControl';
 import { deviceKeys, useBridges, useDiscoveredDevices } from './hooks';
+import { PhoneFound, scanAllFromPhone } from './lanScan';
 import { addDeviceToSupabase, DiscoveredDevice } from './supabaseDevicesService';
 import { Brand } from './types';
 
@@ -60,6 +60,7 @@ export function AddDeviceScreen() {
   const [localKey, setLocalKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [phoneFound, setPhoneFound] = useState<PhoneFound[] | null>(null);
 
   const pickFound = (found: DiscoveredDevice) => {
     const match = BRANDS.find(b => b.brand === found.brand) ?? BRANDS[0];
@@ -70,19 +71,28 @@ export function AddDeviceScreen() {
     setName(found.name ?? '');
   };
 
-  // Phone-side scan: only Gree / Climate King answer a direct query, and it needs this phone on
-  // the AC's Wi-Fi. Every other brand is found by the Home Bridge.
+  const pickPhoneFound = (found: PhoneFound) => {
+    const match = BRANDS.find(b => b.brand === found.brand) ?? BRANDS[0];
+    setOption(match);
+    setIp(found.ip);
+    setMac(match.needs === 'mac' ? found.mac : '');
+    setDeviceId(found.deviceId ?? '');
+    setName(found.name ?? '');
+  };
+
+  // Scan from this phone for every brand (it must be on the same Wi-Fi as the ACs), and ask the
+  // Home Bridge's list again in case it found something since this screen opened.
   const scanFromPhone = async () => {
     setScanning(true);
     try {
-      const units = await GreeControl.scanForDevices();
-      if (!units.length) {
-        Alert.alert('Nothing found', 'Make sure this phone is on the same 2.4 GHz Wi-Fi as the AC and the AC is powered.');
-      } else {
-        setOption(BRANDS[0]);
-        setIp(units[0].ip);
-        setMac(units[0].mac);
-        Alert.alert('Found', `${units.length} Gree / Climate King unit(s). The first one is filled in below.`);
+      const [units] = await Promise.all([scanAllFromPhone(), discovered.refetch()]);
+      setPhoneFound(units);
+      if (units.length === 1) pickPhoneFound(units[0]);
+      if (!units.length && !(discovered.data ?? []).length) {
+        Alert.alert(
+          'No AC found',
+          'Make sure this phone is on the same 2.4 GHz Wi-Fi as the AC and the AC is switched on. A brand-new AC must be connected to Wi-Fi first: use “New AC? Connect it to Wi-Fi” above.',
+        );
       }
     } finally {
       setScanning(false);
@@ -155,11 +165,45 @@ export function AddDeviceScreen() {
           </Text>
         </Pressable>
 
+        <Spacer size="md" />
+        <Button label={scanning ? 'Scanning your Wi-Fi…' : 'Scan for ACs'} onPress={scanFromPhone} loading={scanning} variant="secondary" fullWidth size="lg" />
+        <Spacer size="xs" />
+        <Text variant="caption" tone="muted" center>
+          Finds Climate King, Gree, Kenwood, TCL and Smart Life units on this Wi-Fi. Haier units are found by the Home Bridge.
+        </Text>
+
+        {phoneFound?.length ? (
+          <>
+            <Spacer size="xl" />
+            <Text variant="overline" tone="muted">
+              Found by this phone
+            </Text>
+            <Spacer size="sm" />
+            <Stack gap="sm">
+              {phoneFound.map(found => (
+                <Pressable key={`${found.brand}:${found.mac}`} onPress={() => pickPhoneFound(found)} style={({ pressed }) => [styles.foundRow, pressed && styles.pressed]}>
+                  <WifiIcon size={20} color={theme.colors.accent} />
+                  <View style={styles.flex}>
+                    <Text variant="label">{found.name || BRAND_LABEL[found.brand]}</Text>
+                    <Text variant="caption" tone="muted">
+                      {BRAND_LABEL[found.brand]} · {found.ip}
+                      {found.brand === 'tuya' ? ' · key needed' : ''}
+                    </Text>
+                  </View>
+                  <Text variant="label" tone="brand">
+                    Use
+                  </Text>
+                </Pressable>
+              ))}
+            </Stack>
+          </>
+        ) : null}
+
         {foundList.length ? (
           <>
             <Spacer size="xl" />
             <Text variant="overline" tone="muted">
-              Found on your Wi-Fi
+              Found by the Home Bridge
             </Text>
             <Spacer size="sm" />
             <Stack gap="sm">
@@ -239,16 +283,6 @@ export function AddDeviceScreen() {
           <Text variant="overline" tone="muted">
             3 · Connection
           </Text>
-          {option.brand === 'gree' ? (
-            <Pressable onPress={scanFromPhone} disabled={scanning} hitSlop={8}>
-              <Row gap="xs" align="center">
-                <SearchIcon size={14} color={theme.colors.accent} />
-                <Text variant="caption" tone="brand">
-                  {scanning ? 'Scanning…' : 'Scan from this phone'}
-                </Text>
-              </Row>
-            </Pressable>
-          ) : null}
         </Row>
         <Spacer size="sm" />
         <Stack gap="sm">
