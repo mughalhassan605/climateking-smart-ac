@@ -173,21 +173,19 @@ alter table public.error_logs
 do $$
 declare
   t text;
+  p record;
 begin
   foreach t in array array[
     'devices', 'device_secrets', 'device_commands', 'bridges', 'discovered_devices',
     'user_activity', 'error_logs'
   ] loop
     execute format('alter table public.%I enable row level security', t);
-    -- The first app version opened these tables to everyone; policies are OR-ed, so drop them.
-    execute format('drop policy if exists "Allow public read %s" on public.%I', t, t);
-    execute format('drop policy if exists "Allow public insert %s" on public.%I', t, t);
-    execute format('drop policy if exists "Allow public update %s" on public.%I', t, t);
-    execute format('drop policy if exists "Allow public delete %s" on public.%I', t, t);
-    execute format('drop policy if exists "owner read" on public.%I', t);
-    execute format('drop policy if exists "owner insert" on public.%I', t);
-    execute format('drop policy if exists "owner update" on public.%I', t);
-    execute format('drop policy if exists "owner delete" on public.%I', t);
+    -- Policies are OR-ed, so any policy left from before (the first app version opened these
+    -- tables to everyone as "Allow public ...", but names vary) would undo the owner rule.
+    -- Drop every existing policy on the table, whatever its name, then add the owner ones.
+    for p in select policyname from pg_policies where schemaname = 'public' and tablename = t loop
+      execute format('drop policy %I on public.%I', p.policyname, t);
+    end loop;
     execute format('create policy "owner read" on public.%I for select using (owner_id = auth.uid())', t);
     execute format('create policy "owner insert" on public.%I for insert with check (owner_id = auth.uid())', t);
     execute format(

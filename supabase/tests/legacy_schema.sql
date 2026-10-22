@@ -17,3 +17,11 @@ create table public.error_logs (
 insert into public.devices (id, name, vendor, brand, local_key) values
   ('legacy-1', 'Old Kenwood', 'Kenwood', 'tuya', 'abcdef0123456789'),
   ('legacy-2', 'Old Gree', 'Gree', 'gree', null);
+
+-- The first version left the tables open to the anon key; one policy under an unexpected name too.
+alter table public.devices enable row level security;
+create policy "Allow public read devices" on public.devices for select using (true);
+create policy "Allow public update devices" on public.devices for update using (true);
+create policy "anyone can read" on public.devices for select using (true);
+alter table public.user_activity enable row level security;
+create policy "Allow public insert user_activity" on public.user_activity for insert with check (true);

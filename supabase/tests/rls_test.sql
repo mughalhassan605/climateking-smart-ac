@@ -53,4 +53,10 @@ begin
     raise exception 'local_key column still present';
   end if;
 end $$;
+do $$
+begin
+  if exists (select 1 from pg_policies where schemaname = 'public' and policyname not like 'owner %') then
+    raise exception 'a non-owner policy survived the migration';
+  end if;
+end $$;
 select 'rls ok';
