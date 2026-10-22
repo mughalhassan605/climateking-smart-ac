@@ -1,8 +1,9 @@
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { AutoIcon, ChevronLeftIcon, DropletIcon, FanIcon, FlameIcon, MinusIcon, PlusIcon, PowerIcon, SnowflakeIcon } from '../../components/icons';
+import { AutoIcon, ChevronLeftIcon, DropletIcon, FanIcon, FlameIcon, MinusIcon, PlusIcon, PowerIcon, SettingsIcon, SnowflakeIcon } from '../../components/icons';
 import { EmptyState, Spinner } from '../../components/feedback';
 import { Text } from '../../components/Text';
 import { Spacer } from '../../components/layout';
@@ -29,7 +30,7 @@ const FAN_ORDER: FanSpeed[] = [...FAN_PRESETS.slice(0, 1), ...FAN_LEVELS, 'turbo
 export function DeviceControlScreen() {
   const { theme } = useUnistyles();
   const { t } = useI18n();
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<DeviceStackParams>>();
   const { params } = useRoute<RouteProp<DeviceStackParams, 'DeviceControl'>>();
   const roomLabel = useRoomLabel();
   const { data: device, isLoading } = useDevice(params.deviceId);
@@ -64,6 +65,15 @@ export function DeviceControlScreen() {
       <View style={styles.backBar}>
         <Pressable onPress={() => navigation.goBack()} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('common.back')} style={styles.back}>
           <ChevronLeftIcon size={26} color={theme.colors.textPrimary} />
+        </Pressable>
+        <Pressable
+          onPress={() => navigation.navigate('DeviceSettings', { deviceId: device.id })}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={t('settings.title')}
+          style={styles.back}
+        >
+          <SettingsIcon size={22} color={theme.colors.textSecondary} />
         </Pressable>
       </View>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -199,7 +209,7 @@ export function DeviceControlScreen() {
 
 const styles = StyleSheet.create((theme, rt) => ({
   root: { flex: 1, backgroundColor: theme.colors.background, paddingTop: rt.insets.top },
-  backBar: { height: 44, justifyContent: 'center', paddingHorizontal: theme.spacing.lg },
+  backBar: { height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: theme.spacing.lg },
   back: { width: 40, height: 40, alignItems: 'flex-start', justifyContent: 'center' },
   content: { paddingHorizontal: theme.spacing.xl, paddingBottom: theme.spacing.xl3 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md },

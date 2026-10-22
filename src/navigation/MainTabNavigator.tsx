@@ -5,11 +5,14 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HomeIcon, SnowflakeIcon, UserIcon } from '../components/icons';
 import { Screen, ScreenHeader } from '../components/layout';
 import { EmptyState } from '../components/feedback';
-import { Text } from '../components/Text';
 import { useI18n } from '../i18n';
 import { AddDeviceScreen } from '../features/devices/AddDeviceScreen';
 import { DeviceControlScreen } from '../features/devices/DeviceControlScreen';
+import { DeviceSettingsScreen } from '../features/devices/DeviceSettingsScreen';
+import { MyACsScreen } from '../features/devices/MyACsScreen';
 import { HomeScreen } from '../features/home/HomeScreen';
+import { BridgeStatusBanner } from '../features/home/HomeParts';
+import { useBridges } from '../features/devices/hooks';
 import { useSession } from '../features/auth/session';
 import type { DeviceStackParams, MainTabParams, ProfileStackParams } from './types';
 
@@ -34,9 +37,7 @@ function DeviceStackNavigator() {
     <DeviceStack.Navigator screenOptions={{ headerShown: false }}>
       <DeviceStack.Screen name="Home" component={HomeScreen} />
       <DeviceStack.Screen name="DeviceControl" component={DeviceControlScreen} />
-      <DeviceStack.Screen name="DeviceSettings">
-        {p => <Placeholder title={t('settings.title')} onBack={() => p.navigation.goBack()} />}
-      </DeviceStack.Screen>
+      <DeviceStack.Screen name="DeviceSettings" component={DeviceSettingsScreen} />
       <DeviceStack.Screen name="AddDevice" component={AddDeviceScreen} />
       <DeviceStack.Screen name="RoomManagement">
         {p => <Placeholder title={t('rooms.title')} onBack={() => p.navigation.goBack()} />}
@@ -54,9 +55,11 @@ function DeviceStackNavigator() {
 function ProfileHub() {
   const { t } = useI18n();
   const { user, signOut } = useSession();
+  const bridges = useBridges();
   return (
     <Screen edges={{ top: true, bottom: false }}>
       <ScreenHeader title={t('profile.account')} />
+      <BridgeStatusBanner bridges={bridges.data} onPress={() => bridges.refetch()} />
       <EmptyState
         title={user?.name ?? t('profile.title')}
         description={user?.email}
@@ -72,16 +75,6 @@ function ProfileStackNavigator() {
     <ProfileStack.Navigator screenOptions={{ headerShown: false }}>
       <ProfileStack.Screen name="ProfileHub" component={ProfileHub} />
     </ProfileStack.Navigator>
-  );
-}
-
-function MyACsScreen() {
-  const { t } = useI18n();
-  return (
-    <Screen edges={{ top: true, bottom: false }}>
-      <ScreenHeader title={t('myAcs.title')} />
-      <EmptyState title={t('myAcs.title')} description={t('myAcs.noneYet')} />
-    </Screen>
   );
 }
 

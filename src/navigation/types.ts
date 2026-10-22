@@ -1,3 +1,5 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
+
 export type LegalDocId = 'userAgreement' | 'privacyPolicy' | 'sdkList' | 'openSource';
 
 export type AuthStackParams = {
@@ -26,7 +28,7 @@ export type ProfileStackParams = {
 };
 
 export type MainTabParams = {
-  HomeTab: undefined;
+  HomeTab: NavigatorScreenParams<DeviceStackParams> | undefined;
   ACTab: undefined;
   ProfileTab: undefined;
 };

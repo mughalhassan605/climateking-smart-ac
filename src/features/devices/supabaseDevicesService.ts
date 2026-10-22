@@ -90,7 +90,8 @@ async function readSecrets(deviceId: string): Promise<Record<string, any>> {
 }
 
 async function saveSecrets(deviceId: string, secrets: Record<string, any>) {
-  await supabase.from('device_secrets').upsert({ device_id: deviceId, secrets }, { onConflict: 'device_id' });
+  const { error } = await supabase.from('device_secrets').upsert({ device_id: deviceId, secrets }, { onConflict: 'device_id' });
+  if (error) throw new Error(error.message);
 }
 
 async function finishCommand(id: number, status: 'done' | 'failed', executedBy: string, error: string | null = null) {
@@ -131,7 +132,7 @@ export function createSupabaseDevicesService(): DevicesService {
       .from('devices')
       .update({ ...rowFromDevice(lan.value), ip_address: lan.ip })
       .eq('id', device.id);
-    if (lan.secrets.key !== secrets.key) await saveSecrets(device.id, { ...secrets, ...lan.secrets });
+    if (lan.secrets.key !== secrets.key) await saveSecrets(device.id, { ...secrets, ...lan.secrets }).catch(() => undefined);
     return { ...lan.value, ipAddress: lan.ip };
   }
 
@@ -145,7 +146,7 @@ export function createSupabaseDevicesService(): DevicesService {
           .from('devices')
           .update({ ...rowFromDevice(lan.value), ip_address: lan.ip })
           .eq('id', device.id);
-        if (lan.secrets.key !== secrets.key) await saveSecrets(device.id, { ...secrets, ...lan.secrets });
+        if (lan.secrets.key !== secrets.key) await saveSecrets(device.id, { ...secrets, ...lan.secrets }).catch(() => undefined);
         return lan.value;
       }
       const message = 'The Home Bridge is offline and the AC did not answer on this Wi-Fi.';
@@ -327,4 +328,36 @@ export function subscribeToDeviceChanges(onChange: () => void): () => void {
   return () => {
     supabase.removeChannel(channel);
   };
+}
+
+/** Which secrets a unit has, without exposing their values to the screen. */
+export async function fetchSecretNames(deviceId: string): Promise<string[]> {
+  return Object.entries(await readSecrets(deviceId))
+    .filter(([, v]) => v !== null && v !== '')
+    .map(([k]) => k);
+}
+
+export type ConnectionUpdate = {
+  ipAddress?: string;
+  macAddress?: string;
+  cloudId?: string;
+  /** Merged into the stored secrets; empty values are ignored so a blank field keeps the saved key. */
+  secrets?: Record<string, string>;
+};
+
+export async function updateDeviceConnection(deviceId: string, update: ConnectionUpdate): Promise<void> {
+  const row: Row = {};
+  if (update.ipAddress !== undefined) row.ip_address = update.ipAddress.trim() || null;
+  if (update.macAddress !== undefined) {
+    const mac = update.macAddress.toLowerCase().replace(/[^0-9a-f]/g, '');
+    if (mac && mac.length !== 12) throw new Error('A MAC address has 12 hexadecimal characters.');
+    row.mac_address = mac || null;
+  }
+  if (update.cloudId !== undefined) row.cloud_id = update.cloudId.trim() || null;
+  if (Object.keys(row).length) {
+    const { error } = await supabase.from('devices').update(row).eq('id', deviceId);
+    if (error) throw new Error(error.message);
+  }
+  const fresh = Object.fromEntries(Object.entries(update.secrets ?? {}).filter(([, v]) => v && v.trim()).map(([k, v]) => [k, v.trim()]));
+  if (Object.keys(fresh).length) await saveSecrets(deviceId, { ...(await readSecrets(deviceId)), ...fresh });
 }
