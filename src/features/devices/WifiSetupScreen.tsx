@@ -19,18 +19,21 @@ import { addDeviceToSupabase } from './supabaseDevicesService';
 
 type Family = 'gree' | 'other';
 
-type OtherBrand = { vendor: string; app: string };
+type OtherBrand = { vendor: string; app: string; pairing: string };
 
+// How each brand's remote usually starts Wi-Fi pairing. Remotes differ between models, so the
+// guide says "usually" and points to the manual when this does not work.
 const OTHER_BRANDS: OtherBrand[] = [
-  { vendor: 'Kenwood', app: 'AC Freedom' },
-  { vendor: 'Hyundai', app: 'Smart Life' },
-  { vendor: 'TCL', app: 'TCL Home / Intelligent AC' },
-  { vendor: 'Haier', app: 'HaiSmart / hOn' },
+  { vendor: 'TCL', app: 'TCL Home', pairing: 'Press DISPLAY 6 times within 8 seconds. Two beeps and “CF” on the display.' },
+  { vendor: 'Haier', app: 'hOn', pairing: 'Hold the Wi-Fi button for 5 seconds until the Wi-Fi icon blinks.' },
+  { vendor: 'Hyundai', app: 'Smart Life', pairing: 'Start “Add device” in the app; hold the Wi-Fi (or LED) button until the light blinks.' },
+  { vendor: 'Kenwood', app: 'AC Freedom', pairing: 'Many AC Freedom units: press HEALTH 8 times until the AC beeps.' },
 ];
 
 const ROOMS = ['Living Room', 'Bedroom', 'Office', 'Kitchen', 'Dining Room'];
 
-const GREE_STEPS = ['Setup mode', 'Home Wi-Fi', 'Join the AC', 'Send', 'Find the AC'];
+// Wi-Fi details first: the AC stays in pairing mode for only about 2 minutes.
+const GREE_STEPS = ['Home Wi-Fi', 'Setup mode', 'Join the AC', 'Send', 'Find the AC'];
 
 async function openWifiSettings() {
   try {
@@ -157,19 +160,6 @@ export function WifiSetupScreen() {
 
             {step === 0 ? (
               <StepCard
-                title="Put the AC in setup mode"
-                lines={[
-                  'Plug in the AC and switch it on with the remote.',
-                  'Point the remote at the AC and hold MODE and WIFI together for 5 seconds (on some remotes: hold WIFI alone for 10 seconds).',
-                  'The AC beeps. Its Wi-Fi light blinks or the display shows “AP”.',
-                ]}
-                tip="Already set up with another phone? Doing this resets only the Wi-Fi, not your settings."
-                action={<Button label="The AC beeped" onPress={() => setStep(1)} fullWidth size="lg" />}
-              />
-            ) : null}
-
-            {step === 1 ? (
-              <StepCard
                 title="Your home Wi-Fi"
                 lines={['Type the name and password of the Wi-Fi the AC should use.']}
                 tip="Use the 2.4 GHz network. ACs cannot join a 5 GHz-only network (names often end in “5G”)."
@@ -178,9 +168,22 @@ export function WifiSetupScreen() {
                     <TextInput value={ssid} onChangeText={setSsid} placeholder="Wi-Fi name" autoCapitalize="none" autoCorrect={false} placeholderTextColor={theme.colors.textMuted} style={input} />
                     <TextInput value={password} onChangeText={setPassword} placeholder="Wi-Fi password" autoCapitalize="none" autoCorrect={false} secureTextEntry placeholderTextColor={theme.colors.textMuted} style={input} />
                     <Spacer size="xs" />
-                    <Button label="Next" onPress={() => setStep(2)} disabled={!ssid.trim()} fullWidth size="lg" />
+                    <Button label="Next" onPress={() => setStep(1)} disabled={!ssid.trim()} fullWidth size="lg" />
                   </Stack>
                 }
+              />
+            ) : null}
+
+            {step === 1 ? (
+              <StepCard
+                title="Put the AC in setup mode"
+                lines={[
+                  'Plug in the AC and switch it on with the remote.',
+                  'Hold the WIFI button on the remote until the AC beeps and the Wi-Fi icon appears.',
+                  'Did not work, or was the AC paired before? Turn the AC off with the remote, then hold MODE and WIFI together until it beeps. This resets only the Wi-Fi.',
+                ]}
+                tip="Be quick: the AC stays in setup mode for about 2 minutes. If it runs out, just do this step again."
+                action={<Button label="The AC beeped" onPress={() => setStep(2)} fullWidth size="lg" />}
               />
             ) : null}
 
@@ -364,24 +367,38 @@ function OtherBrandGuide({ onDone }: { onDone: () => void }) {
       <StepCard
         title="Pair it in the brand’s app first"
         lines={[
-          'Install the AC’s own app (see the list below) and add the AC there, on your 2.4 GHz home Wi-Fi.',
+          'Install the AC’s own app (see the list below), start “Add device” and put the AC in pairing mode. Use your 2.4 GHz home Wi-Fi.',
           'Check that you can switch the AC on and off in that app.',
           'Keep the Home Bridge running at home. It finds the AC on your Wi-Fi within a few minutes.',
           'Open Add AC and tap the unit under “Found on your Wi-Fi”.',
         ]}
         action={<Button label="Go to Add AC" onPress={onDone} fullWidth size="lg" />}
       />
-      <Spacer size="lg" />
-      <Stack gap="xs">
+      <Spacer size="xl" />
+      <Text variant="overline" tone="muted">
+        Pairing mode, by brand
+      </Text>
+      <Spacer size="sm" />
+      <Stack gap="sm">
         {OTHER_BRANDS.map(b => (
-          <Row key={b.vendor} justify="space-between">
-            <Text variant="label">{b.vendor}</Text>
-            <Text variant="caption" tone="muted">
-              {b.app} app
+          <Card key={b.vendor} padding="md" style={styles.card}>
+            <Row justify="space-between">
+              <Text variant="label">{b.vendor}</Text>
+              <Text variant="caption" tone="muted">
+                {b.app} app
+              </Text>
+            </Row>
+            <Spacer size="xs" />
+            <Text variant="caption" tone="secondary">
+              {b.pairing}
             </Text>
-          </Row>
+          </Card>
         ))}
       </Stack>
+      <Spacer size="sm" />
+      <Text variant="caption" tone="muted">
+        Buttons differ between models. If this does not work, look for “Wi-Fi” or “network” in the AC’s manual.
+      </Text>
     </>
   );
 }
