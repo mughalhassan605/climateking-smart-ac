@@ -104,7 +104,7 @@ function broadlinkHello(): Buffer {
 }
 
 /** Kenwood (AC Freedom) and TCL Intelligent AC units answer the BroadLink hello on UDP 80. */
-export async function scanBroadlink(seconds = 4): Promise<PhoneFound[]> {
+export async function scanBroadlink(seconds = 3): Promise<PhoneFound[]> {
   const found = new Map<string, PhoneFound>();
   const socket = await openSocket(0, (msg, from) => {
     if (msg.length < 0x40) return;
@@ -145,7 +145,7 @@ function haierSearchQuery(): Buffer {
 }
 
 /** Haier appliances announce themselves on UDP 7083 with UDISCOVERY_UWT without requiring cloud keys. */
-export async function scanHaier(seconds = 4): Promise<PhoneFound[]> {
+export async function scanHaier(seconds = 3): Promise<PhoneFound[]> {
   const found = new Map<string, PhoneFound>();
   const socket = await openSocket(0, (msg, from) => {
     if (msg.length < 0x45 || !msg.subarray(0, 5).equals(HAIER_MAGIC)) return;
@@ -184,7 +184,7 @@ function tuyaPayload(msg: Buffer, encrypted: boolean): any {
 }
 
 /** Hyundai and other Smart Life units announce themselves every few seconds on UDP 6666 / 6667. */
-export async function scanTuya(seconds = 7): Promise<PhoneFound[]> {
+export async function scanTuya(seconds = 4): Promise<PhoneFound[]> {
   const found = new Map<string, PhoneFound>();
   const listener = (encrypted: boolean) => (msg: Buffer, from: string) => {
     const info = tuyaPayload(msg, encrypted);

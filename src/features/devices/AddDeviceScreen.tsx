@@ -85,15 +85,33 @@ export function AddDeviceScreen() {
   const scanFromPhone = async () => {
     setScanning(true);
     try {
-      const [units] = await Promise.all([scanAllFromPhone(), discovered.refetch()]);
+      const [units] = await Promise.all([
+        scanAllFromPhone(),
+        discovered.refetch().catch(() => ({ data: [] })),
+      ]);
       setPhoneFound(units);
-      if (units.length === 1) pickPhoneFound(units[0]);
-      if (!units.length && !(discovered.data ?? []).length) {
+      if (units.length === 1) {
+        pickPhoneFound(units[0]);
         Alert.alert(
-          'No AC found',
-          'Make sure this phone is on the same 2.4 GHz Wi-Fi as the AC and the AC is switched on. A brand-new AC must be connected to Wi-Fi first: use “New AC? Connect it to Wi-Fi” above.',
+          'AC Found!',
+          `Found 1 ${BRAND_LABEL[units[0].brand]} unit at ${units[0].ip}.\n\nThe connection details have been filled in below.`,
+        );
+      } else if (units.length > 1) {
+        Alert.alert(
+          'ACs Found!',
+          `Found ${units.length} units on your Wi-Fi.\n\nPlease tap on your unit in the "Found by this phone" list below to select it.`,
+        );
+      } else {
+        Alert.alert(
+          'No AC Found',
+          'No air conditioner responded on your local Wi-Fi.\n\nPlease make sure:\n1. The AC is switched ON.\n2. Your phone and the AC are connected to the same 2.4 GHz Wi-Fi network.\n3. If your AC is new, tap "New AC? Connect it to Wi-Fi" above.',
         );
       }
+    } catch (err: any) {
+      Alert.alert(
+        'Scan Error',
+        `Could not complete the Wi-Fi scan: ${err?.message || 'Network error'}. Please check your Wi-Fi connection and try again.`,
+      );
     } finally {
       setScanning(false);
     }
