@@ -55,12 +55,33 @@ export function lanExchange({
       resolve({ outcome: replies > 0 && outcome === 'timeout' ? 'replied' : outcome, replies });
     };
 
+    const GREE_BROADCAST_TARGETS = [
+      '255.255.255.255',
+      '192.168.1.255',
+      '192.168.0.255',
+      '192.168.8.255',
+      '192.168.10.255',
+      '192.168.18.255',
+      '192.168.31.255',
+      '192.168.88.255',
+      '192.168.100.255',
+      '10.0.0.255',
+    ];
+
     const transmit = () => {
       if (settled) return;
       try {
-        socket.send(payload, undefined, undefined, port, address, err => {
-          if (err) finish('sendFailed');
-        });
+        if (broadcast) {
+          GREE_BROADCAST_TARGETS.forEach(tgt => {
+            try {
+              socket.send(payload, undefined, undefined, port, tgt, () => {});
+            } catch {}
+          });
+        } else {
+          socket.send(payload, undefined, undefined, port, address, err => {
+            if (err) finish('sendFailed');
+          });
+        }
       } catch {
         finish('sendFailed');
       }
@@ -83,6 +104,13 @@ export function lanExchange({
             socket.setBroadcast(true);
           } catch {
             // some ROMs refuse; unicast still works
+          }
+          try {
+            // Android Wi-Fi chipset blocks incoming UDP broadcasts unless a MulticastLock is held.
+            // Joining a multicast group triggers react-native-udp to acquire that lock.
+            (socket as any).addMembership('224.0.0.251');
+          } catch {
+            // ignore if multicast join fails
           }
         }
         const gap = Math.max(250, Math.floor(timeoutMs / Math.max(attempts, 1)));

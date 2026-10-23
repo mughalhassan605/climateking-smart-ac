@@ -76,7 +76,7 @@ export function AddDeviceScreen() {
     setOption(match);
     setIp(found.ip);
     setMac(match.needs === 'mac' ? found.mac : '');
-    setDeviceId(found.deviceId ?? '');
+    setDeviceId(found.deviceId ?? (match.needs !== 'mac' ? found.mac : ''));
     setName(found.name ?? '');
   };
 
@@ -169,7 +169,7 @@ export function AddDeviceScreen() {
         <Button label={scanning ? 'Scanning your Wi-Fi…' : 'Scan for ACs'} onPress={scanFromPhone} loading={scanning} variant="secondary" fullWidth size="lg" />
         <Spacer size="xs" />
         <Text variant="caption" tone="muted" center>
-          Finds Climate King, Gree, Kenwood, TCL and Smart Life units on this Wi-Fi. Haier units are found by the Home Bridge.
+          Finds Climate King, Gree, Kenwood, TCL, Smart Life (Hyundai) and Haier units on this Wi-Fi.
         </Text>
 
         {phoneFound?.length ? (

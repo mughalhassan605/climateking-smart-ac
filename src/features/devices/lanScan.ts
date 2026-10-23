@@ -28,6 +28,19 @@ const TCL_DEVTYPES = [0x507c, 0x507a];
 // md5("yGAdlopoPVldABfn"), the fixed key Tuya units encrypt their LAN announcements with.
 const TUYA_UDP_KEY = Buffer.from('6c1ec8e2bb9bb59ab50b0daf649b410a', 'hex');
 
+export const BROADCAST_TARGETS = [
+  '255.255.255.255',
+  '192.168.1.255',
+  '192.168.0.255',
+  '192.168.8.255',
+  '192.168.10.255',
+  '192.168.18.255',
+  '192.168.31.255',
+  '192.168.88.255',
+  '192.168.100.255',
+  '10.0.0.255',
+];
+
 function openSocket(port: number, onMessage: (msg: Buffer, from: string) => void): Promise<UdpSocket | null> {
   return new Promise(resolve => {
     const socket = dgram.createSocket({ type: 'udp4', reusePort: true }) as UdpSocket;
@@ -45,6 +58,13 @@ function openSocket(port: number, onMessage: (msg: Buffer, from: string) => void
           socket.setBroadcast(true);
         } catch {
           // some ROMs refuse; listening still works
+        }
+        try {
+          // Android Wi-Fi chipset blocks incoming UDP broadcasts unless a MulticastLock is held.
+          // Joining a multicast group triggers react-native-udp to acquire that lock.
+          (socket as any).addMembership('224.0.0.251');
+        } catch {
+          // multicast group join not supported or already member
         }
         resolve(socket);
       });
@@ -98,7 +118,54 @@ export async function scanBroadlink(seconds = 4): Promise<PhoneFound[]> {
   if (!socket) return [];
   const hello = broadlinkHello();
   for (let i = 0; i < seconds; i += 1) {
-    socket.send(hello, 0, hello.length, 80, '255.255.255.255', () => {});
+    for (const target of BROADCAST_TARGETS) {
+      try {
+        socket.send(hello, 0, hello.length, 80, target, () => {});
+      } catch {}
+    }
+    await wait(1000);
+  }
+  closeAll([socket]);
+  return [...found.values()];
+}
+
+const HAIER_MAGIC = Buffer.from('Haier');
+const HAIER_CMD_SEARCH = 0x6915;
+const HAIER_CMD_DEVICE_INFO = 0x684d;
+
+function haierSearchQuery(): Buffer {
+  const payload = Buffer.alloc(56);
+  payload.write('2.0.0', 0x10);
+  payload.write('UDISCOVERY_SDK', 0x18);
+  const header = Buffer.alloc(21);
+  HAIER_MAGIC.copy(header, 0);
+  header.writeUInt32BE(HAIER_CMD_SEARCH, 5);
+  header.writeUInt32BE(payload.length, 17);
+  return Buffer.concat([header, payload]);
+}
+
+/** Haier appliances announce themselves on UDP 7083 with UDISCOVERY_UWT without requiring cloud keys. */
+export async function scanHaier(seconds = 4): Promise<PhoneFound[]> {
+  const found = new Map<string, PhoneFound>();
+  const socket = await openSocket(0, (msg, from) => {
+    if (msg.length < 0x45 || !msg.subarray(0, 5).equals(HAIER_MAGIC)) return;
+    try {
+      const cmd = msg.readUInt32BE(5);
+      if (cmd !== HAIER_CMD_DEVICE_INFO) return;
+      const deviceId = msg.subarray(0x15, 0x25).toString('ascii').split('\u0000')[0].trim();
+      if (!deviceId) return;
+      const mac = deviceId.toLowerCase();
+      found.set(mac, { brand: 'haier', ip: from, mac, deviceId, name: 'Haier AC' });
+    } catch {}
+  });
+  if (!socket) return [];
+  const query = haierSearchQuery();
+  for (let i = 0; i < seconds; i += 1) {
+    for (const target of BROADCAST_TARGETS) {
+      try {
+        socket.send(query, 0, query.length, 7083, target, () => {});
+      } catch {}
+    }
     await wait(1000);
   }
   closeAll([socket]);
@@ -137,7 +204,7 @@ export async function scanGree(): Promise<PhoneFound[]> {
 
 /** Every brand at once. A probe that fails (port taken, no Wi-Fi) is skipped, not fatal. */
 export async function scanAllFromPhone(): Promise<PhoneFound[]> {
-  const results = await Promise.allSettled([scanGree(), scanBroadlink(), scanTuya()]);
+  const results = await Promise.allSettled([scanGree(), scanBroadlink(), scanTuya(), scanHaier()]);
   const all = results.flatMap(r => (r.status === 'fulfilled' ? r.value : []));
   const unique = new Map(all.map(f => [`${f.brand}:${f.mac}`, f]));
   return [...unique.values()];
